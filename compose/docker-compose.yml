@@ -1,0 +1,116 @@
+# Docker Compose foundation for the Prediction AI Platform.
+#
+# This file defines INFRASTRUCTURE ONLY. It is not meant to be run yet:
+#   - prediction-api, learning-engine, and discord-control have no
+#     application code or Dockerfile yet, so they are left as commented
+#     stubs until a later phase builds them out.
+#   - ollama, postgres, and searxng are real, runnable services, but
+#     nothing in this repo currently starts them automatically.
+#
+# Philosophy:
+#   - One service, one responsibility.
+#   - Everything configurable lives in .env (see .env.example).
+#   - CPU-only by default. No GPU reservations anywhere.
+#   - No service is added "just in case" — see docs/DOCKER_ARCHITECTURE.md
+#     for why each one exists.
+
+networks:
+  # A single internal bridge network is enough for this platform's size.
+  # Every service talks to every other service by container name; there is
+  # no need for network segmentation until a real isolation requirement
+  # appears.
+  internal:
+    driver: bridge
+
+volumes:
+  # Ollama's downloaded models. Large and slow to re-fetch, so persisted.
+  ollama_models:
+  # Postgres data directory. The only stateful data store on the platform.
+  postgres_data:
+  # SearXNG's configuration (settings.yml, etc).
+  searxng_config:
+
+services:
+  # --- Local LLM inference, CPU-only ---
+  # Serves the models used by prediction-api and learning-engine for
+  # reasoning and prediction generation, without depending on an external
+  # API provider.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    networks:
+      - internal
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
+  # --- Persistent storage ---
+  # System of record for predictions, outcomes, and anything the learning
+  # engine needs to read back later. The only database on the platform.
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    networks:
+      - internal
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # --- Self-hosted web search ---
+  # Gives agents a way to research current information without depending
+  # on a third-party search API.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    networks:
+      - internal
+    volumes:
+      - searxng_config:/etc/searxng
+    restart: unless-stopped
+
+  # --- Application services (not yet implemented) ---
+  # These three are intentionally left commented out: there is no
+  # Dockerfile or application code for them yet. They are listed here so
+  # the eventual shape of the platform is visible, and so a future phase
+  # only has to uncomment and fill in `build:` once the service exists.
+
+  # prediction-api:
+  #   build: ../services/prediction-api
+  #   container_name: prediction-api
+  #   networks:
+  #     - internal
+  #   depends_on:
+  #     - ollama
+  #     - postgres
+  #   environment:
+  #     - HOST=${PREDICTION_API_HOST}
+  #     - PORT=${PREDICTION_API_PORT}
+  #   restart: unless-stopped
+
+  # learning-engine:
+  #   build: ../services/learning-engine
+  #   container_name: learning-engine
+  #   networks:
+  #     - internal
+  #   depends_on:
+  #     - postgres
+  #   environment:
+  #     - HOST=${LEARNING_ENGINE_HOST}
+  #     - PORT=${LEARNING_ENGINE_PORT}
+  #   restart: unless-stopped
+
+  # discord-control:
+  #   build: ../services/discord-control
+  #   container_name: discord-control
+  #   networks:
+  #     - internal
+  #   depends_on:
+  #     - prediction-api
+  #   environment:
+  #     - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+  #     - DISCORD_GUILD_ID=${DISCORD_GUILD_ID}
+  #   restart: unless-stopped
