@@ -18,13 +18,16 @@ a single monolith:
   agent behavior.
 
 These services share a common set of prompts, configuration, and memory, and are
-designed to run on self-hosted, CPU-only hardware.
+designed to run on self-hosted, CPU-only hardware. They are backed by local
+infrastructure — an LLM runtime (Ollama), a database, and self-hosted search —
+deployed incrementally, one service at a time. See
+[docs/DOCKER_ARCHITECTURE.md](docs/DOCKER_ARCHITECTURE.md) for current status.
 
 ## Repository Layout
 
 ```
 docker/      Dockerfiles for individual services
-compose/     Docker Compose definitions (added in a later phase)
+compose/     Docker Compose definitions
 config/      Non-secret configuration and placeholders
 docs/        Project documentation
 scripts/     Operational and developer scripts
@@ -52,5 +55,8 @@ tests/       Automated tests
 - **Maintainability over cleverness.** Favor clear, boring solutions over
   premature abstraction.
 
-This repository currently contains only the foundational structure. Application
-code, configuration, and orchestration will be added in subsequent phases.
+Infrastructure and application services are being brought up incrementally,
+one at a time, each establishing a stable baseline before the next is added.
+Local LLM inference (Ollama) is the first deployed service — see
+[docs/OLLAMA.md](docs/OLLAMA.md). Everything else (database, search,
+application services) remains undeployed until its own phase.

@@ -1,11 +1,13 @@
 # Docker Compose foundation for the Prediction AI Platform.
 #
-# This file defines INFRASTRUCTURE ONLY. It is not meant to be run yet:
-#   - prediction-api, learning-engine, and discord-control have no
-#     application code or Dockerfile yet, so they are left as commented
-#     stubs until a later phase builds them out.
-#   - ollama, postgres, and searxng are real, runnable services, but
-#     nothing in this repo currently starts them automatically.
+# Services are deployed one at a time, each establishing a stable baseline
+# before the next is added:
+#   - ollama is deployed (SPEC-004) and is the only service that runs by
+#     default. See docs/OLLAMA.md.
+#   - postgres and searxng are fully defined but commented out — runnable
+#     once it's their turn, not before.
+#   - prediction-api, learning-engine, and discord-control are commented
+#     stubs with no application code or Dockerfile yet.
 #
 # Philosophy:
 #   - One service, one responsibility.
@@ -34,43 +36,57 @@ services:
   # --- Local LLM inference, CPU-only ---
   # Serves the models used by prediction-api and learning-engine for
   # reasoning and prediction generation, without depending on an external
-  # API provider.
+  # API provider. First production service of the platform — every other
+  # service below stays disabled until it has its own deployment phase.
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
     networks:
       - internal
+    ports:
+      # Only the Ollama API port is published, and only on localhost, so
+      # local clients (and later, other containers on `internal`) can reach
+      # it without exposing it beyond this machine.
+      - "127.0.0.1:${OLLAMA_PORT}:11434"
     volumes:
       - ollama_models:/root/.ollama
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
-  # --- Persistent storage ---
+  # --- Persistent storage (disabled — SPEC-004 is Ollama-only) ---
   # System of record for predictions, outcomes, and anything the learning
   # engine needs to read back later. The only database on the platform.
-  postgres:
-    image: postgres:16-alpine
-    container_name: postgres
-    networks:
-      - internal
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
+  # Left commented until its own deployment phase.
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: postgres
+  #   networks:
+  #     - internal
+  #   environment:
+  #     POSTGRES_USER: ${POSTGRES_USER}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  #     POSTGRES_DB: ${POSTGRES_DB}
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   restart: unless-stopped
 
-  # --- Self-hosted web search ---
+  # --- Self-hosted web search (disabled — SPEC-004 is Ollama-only) ---
   # Gives agents a way to research current information without depending
-  # on a third-party search API.
-  searxng:
-    image: searxng/searxng:latest
-    container_name: searxng
-    networks:
-      - internal
-    volumes:
-      - searxng_config:/etc/searxng
-    restart: unless-stopped
+  # on a third-party search API. Left commented until its own deployment
+  # phase.
+  # searxng:
+  #   image: searxng/searxng:latest
+  #   container_name: searxng
+  #   networks:
+  #     - internal
+  #   volumes:
+  #     - searxng_config:/etc/searxng
+  #   restart: unless-stopped
 
   # --- Application services (not yet implemented) ---
   # These three are intentionally left commented out: there is no
