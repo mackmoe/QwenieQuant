@@ -5,8 +5,8 @@
 #   - ollama is deployed (SPEC-004). See docs/OLLAMA.md.
 #   - searxng is deployed (SPEC-005), internal-only, no published port.
 #     See docs/SEARXNG.md.
-#   - postgres is fully defined but commented out — runnable once it's its
-#     turn, not before.
+#   - postgres is deployed (SPEC-006), internal-only, no published port.
+#     See docs/POSTGRES.md.
 #   - prediction-api, learning-engine, and discord-control are commented
 #     stubs with no application code or Dockerfile yet.
 #
@@ -63,22 +63,34 @@ services:
       retries: 3
       start_period: 30s
 
-  # --- Persistent storage (disabled — SPEC-004 is Ollama-only) ---
-  # System of record for predictions, outcomes, and anything the learning
-  # engine needs to read back later. The only database on the platform.
-  # Left commented until its own deployment phase.
-  # postgres:
-  #   image: postgres:16-alpine
-  #   container_name: postgres
-  #   networks:
-  #     - internal
-  #   environment:
-  #     POSTGRES_USER: ${POSTGRES_USER}
-  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-  #     POSTGRES_DB: ${POSTGRES_DB}
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
-  #   restart: unless-stopped
+  # --- Persistent storage ---
+  # System of record for predictions, learning history, agent memory,
+  # reflections, and platform operational records — not just a vector
+  # store. Image is pgvector's own build of the official postgres image
+  # (same Postgres, pgvector compiled in); no custom Dockerfile needed.
+  # Internal-only: no port is published to the host. See docs/POSTGRES.md.
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    networks:
+      - internal
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Runs once, only against an empty data directory: creates the
+      # pgvector extension and the platform's empty schemas. See
+      # docker/postgres/init/ and docs/POSTGRES.md.
+      - ../docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   # --- Self-hosted web search ---
   # Gives agents a way to research current information without depending
