@@ -1,0 +1,71 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+.python-version
+
+# Testing / coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Docker ---
+docker-compose.override.yml
+*.override.yml
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Temporary files ---
+*.tmp
+*.bak
+*.cache
+tmp/
+
+# --- Local databases ---
+*.sqlite3
+*.db
+
+# --- Model downloads ---
+*.bin
+*.gguf
+*.safetensors
+models/
+
+# --- Environment files ---
+.env
+.env.*
+!.env.example
+
+# --- Local-only data ---
+backups/*
+!backups/.gitkeep
+memory/*
+!memory/.gitkeep
