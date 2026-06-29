@@ -9,16 +9,17 @@ how they fit together.
 | Service | Responsibility | Status |
 |---|---|---|
 | `ollama` | Runs LLM inference locally, CPU-only, so agents don't depend on an external model API. | **Deployed** (SPEC-004) — see [OLLAMA.md](OLLAMA.md) |
+| `searxng` | Self-hosted search, giving agents a way to research without a third-party search API. | **Deployed** (SPEC-005), internal-only — see [SEARXNG.md](SEARXNG.md) |
 | `postgres` | System of record for predictions, outcomes, and learning history. | Defined, disabled — not yet deployed |
-| `searxng` | Self-hosted search, giving agents a way to research without a third-party search API. | Defined, disabled — not yet deployed |
 | `prediction-api` | Generates predictions using `ollama` and reads/writes `postgres`. | Stubbed — no app code yet |
 | `learning-engine` | Reviews past predictions and outcomes in `postgres` to refine strategy. | Stubbed — no app code yet |
 | `discord-control` | Human-in-the-loop interface for monitoring and steering agents. | Stubbed — no app code yet |
 
 Services are deployed one at a time, each establishing a stable baseline
-before the next is added. `ollama` is the first; `postgres` and `searxng`
-are fully defined in `docker-compose.yml` but commented out, the same way
-the three application services are, until their own deployment phase.
+before the next is added. `ollama` was first, `searxng` is second;
+`postgres` is fully defined in `docker-compose.yml` but commented out, the
+same way the three application services are, until its own deployment
+phase.
 
 Each service exists for exactly one reason and owns exactly one concern. No
 service was added speculatively — anything not directly needed by prediction
@@ -35,34 +36,43 @@ option that satisfies current needs; there is no multi-tenant or
 public-facing requirement yet that would justify network segmentation or a
 reverse proxy.
 
+`ollama` publishes its API to `127.0.0.1` on the host, since local
+development clients need to reach it directly. `searxng` publishes
+**nothing** to the host — it's reachable only from other containers on
+`internal` (as `http://searxng:8080`), since it's a machine-facing service
+with no legitimate reason to be reached from outside the Docker network.
+
 ## Persistent Storage
 
-Three named volumes exist, one per piece of state that must survive a
-container restart:
+Named volumes exist, one per piece of state that must survive a container
+restart:
 
 - `ollama_models` — downloaded model weights, large and slow to re-fetch.
 - `postgres_data` — the platform's only database.
-- `searxng_config` — SearXNG's own settings.
+- `searxng_config` — any non-settings runtime files SearXNG keeps under
+  `/etc/searxng`. The settings themselves are a version-controlled,
+  read-only bind mount (`config/searxng/settings.yml`), not part of this
+  volume — see [SEARXNG.md](SEARXNG.md).
+- `searxng_cache` — SearXNG's on-disk query cache.
 
 No other volumes are defined. `prediction-api`, `learning-engine`, and
 `discord-control` are stateless by design — any state they need belongs in
 `postgres`, not in a container volume.
 
-`ollama_models` is currently in use and verified persistent across
-container recreation (see [OLLAMA.md](OLLAMA.md)). `postgres_data` and
-`searxng_config` exist in the compose file but are not yet attached to a
-running container.
+`ollama_models`, `searxng_config`, and `searxng_cache` are currently in use
+and verified persistent across container recreation. `postgres_data` exists
+in the compose file but is not yet attached to a running container.
 
 ## Startup Philosophy
 
 Nothing in this repository starts automatically by default, and services
-are brought up one at a time rather than all together. `ollama` is the
-only service currently running (`docker compose up -d ollama`); every
-other service stays commented out in `docker-compose.yml` until its own
-deployment phase, so the file never implies something runnable that isn't:
+are brought up one at a time rather than all together. `ollama` and
+`searxng` are the only services currently running (`docker compose up -d
+ollama searxng`); every other service stays commented out in
+`docker-compose.yml` until its own deployment phase, so the file never
+implies something runnable that isn't:
 
-1. `postgres` and `searxng` are fully defined but disabled until their own
-   deployment phases.
+1. `postgres` is fully defined but disabled until its own deployment phase.
 2. `prediction-api`, `learning-engine`, and `discord-control` additionally
    need real Dockerfiles and application code before they can be enabled.
 3. `compose/.env` must be populated from `compose/.env.example` with real,
