@@ -6,6 +6,12 @@ import uuid
 from pydantic import BaseModel, Field
 
 
+def _make_prediction_id() -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    suffix = uuid.uuid4().hex[:8]
+    return f"pred_{ts}_{suffix}"
+
+
 class PredictionCategory(str, Enum):
     weather = "weather"
     sports = "sports"
@@ -46,7 +52,7 @@ class LLMPrediction(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    prediction_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    prediction_id: str = Field(default_factory=_make_prediction_id)
     question: str
     prediction: str
     confidence: float

@@ -65,17 +65,80 @@ one:
 
 ## Schema Layout
 
-Five empty schemas, created by `docker/postgres/init/02-schemas.sql`. No
-tables exist yet — those are added in later phases, by whichever service
-owns that data, not in this initialization step.
+Five schemas, created by `docker/postgres/init/02-schemas.sql`. Tables
+are added by each service that owns that data, not in the initialization
+scripts.
 
-| Schema | Purpose |
-|---|---|
-| `prediction` | Generated predictions and their eventual outcomes. |
-| `learning` | Review of past predictions and outcomes, used to refine future strategy. |
-| `memory` | Persistent agent memory, including embeddings (pgvector). |
-| `reflection` | Self-review of past decisions and reasoning. |
-| `system` | Platform-level operational records (e.g. job runs, audit history). |
+| Schema | Purpose | Tables |
+| --- | --- | --- |
+| `prediction` | Generated predictions and their eventual outcomes. | `prediction_requests`, `prediction_responses` (added in SPEC-008) |
+| `learning` | Review of past predictions and outcomes, used to refine future strategy. | None yet |
+| `memory` | Persistent agent memory, including embeddings (pgvector). | None yet |
+| `reflection` | Self-review of past decisions and reasoning. | None yet |
+| `system` | Platform-level operational records (e.g. job runs, audit history). | None yet |
+
+## Prediction Tables (SPEC-008)
+
+The `prediction-api` service creates these tables at startup via
+`CREATE TABLE IF NOT EXISTS` (idempotent; safe to restart). The init
+scripts in `docker/postgres/init/` only run on an empty data directory and
+cannot be used for post-initialization DDL.
+
+**`prediction.prediction_requests`** — one row per incoming request:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `prediction_id` | TEXT PK | `pred_YYYYMMDDTHHMMSS_xxxxxxxx` — sortable, human-readable |
+| `created_at` | TIMESTAMPTZ | Server-set on insert |
+| `question` | TEXT | The prediction question |
+| `category` | TEXT | `weather`, `sports`, `politics`, or `finance` |
+| `options` | JSONB | The valid answer choices |
+| `context` | JSONB | Optional structured context from caller |
+| `resolution_date` | DATE | Optional |
+| `market_id` | TEXT | Optional external passthrough identifier |
+| `prompt_version` | TEXT | Prompt template version at time of inference |
+
+**`prediction.prediction_responses`** — one row per completed prediction,
+linked 1:1 to its request:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `prediction_id` | TEXT PK | FK → `prediction_requests.prediction_id` |
+| `created_at` | TIMESTAMPTZ | Server-set on insert |
+| `prediction` | TEXT | The model's chosen option |
+| `confidence` | DOUBLE PRECISION | 0.0–1.0 |
+| `reasoning` | TEXT | Model's explanation |
+| `key_factors` | JSONB | List of factors that influenced the prediction |
+| `model` | TEXT | Ollama model name used |
+| `execution_ms` | INTEGER | Ollama inference time in milliseconds |
+| `search_used` | BOOLEAN | Whether SearXNG context was included |
+| `memory_used` | BOOLEAN | Whether historical context was included |
+| `validation_status` | TEXT | `valid` if response passed all validators |
+| `response_payload` | JSONB | Full serialized `PredictionResponse` for audit |
+
+### prediction_id Design
+
+Format: `pred_YYYYMMDDTHHMMSS_xxxxxxxx`
+Example: `pred_20260701T040608_85594185`
+
+Properties:
+
+- **Globally unique** — the 8-char hex suffix (from UUID4) is the uniqueness
+  guarantee.
+- **Human-readable** — the timestamp is legible without a decoder.
+- **Sortable by time** — lexicographic sort on `prediction_id` gives
+  chronological order (IDs from different seconds sort correctly; within
+  the same second, ordering by the random suffix is acceptable since the
+  collision probability is ~1 in 4 billion).
+- **The primary traceability key** — the same `prediction_id` links the
+  request row, the response row, and the API response to the caller.
+
+### Learning Engine Compatibility
+
+The schema stores facts (what was asked, what was predicted, when, how
+long it took) without conclusions (no scores, no quality labels). The
+learning engine can join `prediction_requests` and `prediction_responses`
+on `prediction_id` without schema changes when it is deployed.
 
 Each schema has a `COMMENT ON SCHEMA` matching the description above,
 queryable directly from Postgres:

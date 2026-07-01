@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     ollama_timeout: int = 300
 
     postgres_url: str = ""
+    prompt_version: str = "1.0"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

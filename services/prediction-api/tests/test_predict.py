@@ -1,7 +1,7 @@
 import json
+import re
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -157,3 +157,32 @@ def test_predict_custom_options():
         response = client.post("/predict", json=request)
     assert response.status_code == 200
     assert response.json()["prediction"] == "Team A"
+
+
+def test_predict_id_has_expected_format():
+    with _mock_chat(_MOCK_LLM_RESPONSE):
+        response = client.post("/predict", json=_VALID_REQUEST)
+    pid = response.json()["prediction_id"]
+    assert re.match(r"^pred_\d{8}T\d{6}_[0-9a-f]{8}$", pid), (
+        f"prediction_id '{pid}' does not match expected format"
+    )
+
+
+def test_predict_ids_are_unique_across_calls():
+    ids = set()
+    for _ in range(5):
+        with _mock_chat(_MOCK_LLM_RESPONSE):
+            response = client.post("/predict", json=_VALID_REQUEST)
+        ids.add(response.json()["prediction_id"])
+    assert len(ids) == 5
+
+
+def test_persist_called_with_execution_ms():
+    with _mock_chat(_MOCK_LLM_RESPONSE):
+        with patch("app.postgres.persist_prediction", new=AsyncMock()) as mock_persist:
+            response = client.post("/predict", json=_VALID_REQUEST)
+    assert response.status_code == 200
+    mock_persist.assert_called_once()
+    _req, _resp, execution_ms = mock_persist.call_args[0]
+    assert isinstance(execution_ms, int)
+    assert execution_ms >= 0
