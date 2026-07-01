@@ -7,11 +7,11 @@ how they fit together.
 ## Service Responsibilities
 
 | Service | Responsibility | Status |
-|---|---|---|
+| --- | --- | --- |
 | `ollama` | Runs LLM inference locally, CPU-only, so agents don't depend on an external model API. | **Deployed** (SPEC-004) — see [OLLAMA.md](OLLAMA.md) |
 | `searxng` | Self-hosted search, giving agents a way to research without a third-party search API. | **Deployed** (SPEC-005), internal-only — see [SEARXNG.md](SEARXNG.md) |
 | `postgres` | System of record for predictions, learning history, agent memory, and reflections. | **Deployed** (SPEC-006), internal-only — see [POSTGRES.md](POSTGRES.md) |
-| `prediction-api` | Generates predictions using `ollama` and reads/writes `postgres`. | Stubbed — no app code yet |
+| `prediction-api` | Transforms structured prediction requests into structured AI predictions via `ollama`. | **Deployed** (SPEC-007), localhost-only — see [PREDICTION_API.md](PREDICTION_API.md) |
 | `learning-engine` | Reviews past predictions and outcomes in `postgres` to refine strategy. | Stubbed — no app code yet |
 | `discord-control` | Human-in-the-loop interface for monitoring and steering agents. | Stubbed — no app code yet |
 
@@ -68,13 +68,13 @@ container recreation.
 
 Nothing in this repository starts automatically by default, and services
 are brought up one at a time rather than all together. `ollama`, `searxng`,
-and `postgres` are the only services currently running (`docker compose up
--d ollama searxng postgres`); the three application services stay
-commented out in `docker-compose.yml` until their own deployment phase, so
-the file never implies something runnable that isn't:
+`postgres`, and `prediction-api` are currently running (`docker compose up
+-d ollama searxng postgres prediction-api`); `learning-engine` and
+`discord-control` stay commented out in `docker-compose.yml` until their
+own deployment phase, so the file never implies something runnable that isn't:
 
-1. `prediction-api`, `learning-engine`, and `discord-control` need real
-   Dockerfiles and application code before they can be enabled.
+1. `learning-engine` and `discord-control` need real Dockerfiles and
+   application code before they can be enabled.
 2. `compose/.env` must be populated from `compose/.env.example` with real,
    non-placeholder values before any given service is started.
 

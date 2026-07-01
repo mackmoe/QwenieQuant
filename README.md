@@ -55,8 +55,9 @@ tests/       Automated tests
 - **Maintainability over cleverness.** Favor clear, boring solutions over
   premature abstraction.
 
-Infrastructure and application services are being brought up incrementally,
-one at a time, each establishing a stable baseline before the next is added.
-Local LLM inference (Ollama) is the first deployed service — see
-[docs/OLLAMA.md](docs/OLLAMA.md). Everything else (database, search,
-application services) remains undeployed until its own phase.
+Infrastructure and application services are brought up incrementally, one
+at a time, each establishing a stable baseline before the next is added.
+Four services are currently running: Ollama (LLM inference), SearXNG
+(search), PostgreSQL + pgvector (persistence), and the Prediction API (AI
+Core). See [docs/DOCKER_ARCHITECTURE.md](docs/DOCKER_ARCHITECTURE.md) for
+current deployment status of all services.
