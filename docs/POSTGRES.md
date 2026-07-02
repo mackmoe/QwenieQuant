@@ -71,8 +71,8 @@ scripts.
 
 | Schema | Purpose | Tables |
 | --- | --- | --- |
-| `prediction` | Generated predictions and their eventual outcomes. | `prediction_requests`, `prediction_responses` (added in SPEC-008) |
-| `learning` | Review of past predictions and outcomes, used to refine future strategy. | None yet |
+| `prediction` | Generated predictions and their eventual outcomes. | `prediction_requests`, `prediction_responses` (SPEC-008), `prediction_outcomes` (SPEC-009) |
+| `learning` | Review of past predictions and outcomes, used to refine future strategy. | `learning_summaries` (SPEC-009) |
 | `memory` | Persistent agent memory, including embeddings (pgvector). | None yet |
 | `reflection` | Self-review of past decisions and reasoning. | None yet |
 | `system` | Platform-level operational records (e.g. job runs, audit history). | None yet |
@@ -116,6 +116,39 @@ linked 1:1 to its request:
 | `validation_status` | TEXT | `valid` if response passed all validators |
 | `response_payload` | JSONB | Full serialized `PredictionResponse` for audit |
 
+**`prediction.prediction_outcomes`** — one row per resolved prediction,
+added when the real-world outcome is known. Owned by `prediction-api`
+(SPEC-009); `learning-engine` reads it but does not create it, so the FK
+constraint is always satisfiable regardless of service startup order:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `prediction_id` | TEXT PK | FK → `prediction_requests.prediction_id` |
+| `outcome` | TEXT | The actual result (must match an option from the original request) |
+| `resolved_at` | TIMESTAMPTZ | Server-set on insert |
+
+## Learning Tables (SPEC-009)
+
+The `learning-engine` service creates this table at startup via
+`CREATE TABLE IF NOT EXISTS` (idempotent; same pattern as prediction-api).
+
+**`learning.learning_summaries`** — one row per analysis run:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `analysis_id` | TEXT PK | `analysis_YYYYMMDDTHHMMSS_xxxxxxxx` — same pattern as `prediction_id` |
+| `analyzed_at` | TIMESTAMPTZ | Server-set on insert |
+| `time_range_start` | TIMESTAMPTZ | Earliest `created_at` among analyzed predictions (nullable) |
+| `time_range_end` | TIMESTAMPTZ | Latest `created_at` among analyzed predictions (nullable) |
+| `predictions_analyzed` | INTEGER | Total predictions fetched |
+| `outcomes_available` | INTEGER | Predictions that had a resolved outcome |
+| `accuracy` | DOUBLE PRECISION | Fraction correct; NULL when no outcomes available |
+| `average_confidence` | DOUBLE PRECISION | Mean model confidence across all predictions |
+| `average_execution_ms` | DOUBLE PRECISION | Mean Ollama inference time in milliseconds |
+| `model_breakdown` | JSONB | `{"model_name": count}` |
+| `category_breakdown` | JSONB | `{"category": count}` |
+| `observations` | JSONB | Ordered list of plain-English observation strings |
+
 ### prediction_id Design
 
 Format: `pred_YYYYMMDDTHHMMSS_xxxxxxxx`
@@ -133,12 +166,13 @@ Properties:
 - **The primary traceability key** — the same `prediction_id` links the
   request row, the response row, and the API response to the caller.
 
-### Learning Engine Compatibility
+### Learning Engine Access
 
 The schema stores facts (what was asked, what was predicted, when, how
 long it took) without conclusions (no scores, no quality labels). The
-learning engine can join `prediction_requests` and `prediction_responses`
-on `prediction_id` without schema changes when it is deployed.
+learning engine joins `prediction_requests`, `prediction_responses`, and
+`prediction_outcomes` on `prediction_id` to produce analysis summaries.
+See [LEARNING_ENGINE.md](LEARNING_ENGINE.md).
 
 Each schema has a `COMMENT ON SCHEMA` matching the description above,
 queryable directly from Postgres:
@@ -155,7 +189,7 @@ PostgreSQL is **internal-only** — no port is published to the host.
 no `ports:` entry for the service. It is reachable only from other
 containers on the compose `internal` network:
 
-```
+```text
 host:     postgres
 port:     5432
 database: ${POSTGRES_DB}
@@ -183,12 +217,8 @@ network.
 
 ## Deployment
 
-```
+```sh
 cd compose
-cp .env.example .env   # set OLLAMA_PORT, POSTGRES_USER/PASSWORD/DB
-docker compose up -d ollama searxng postgres
+cp .env.example .env   # set OLLAMA_PORT, POSTGRES_USER/PASSWORD/DB, PREDICTION_API_PORT, LEARNING_ENGINE_PORT
+docker compose up -d
 ```
-
-Only `ollama`, `searxng`, and `postgres` are enabled. `prediction-api`,
-`learning-engine`, and `discord-control` remain commented stubs until
-their own deployment phases.

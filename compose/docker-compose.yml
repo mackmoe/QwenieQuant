@@ -7,8 +7,9 @@
 #     See docs/SEARXNG.md.
 #   - postgres is deployed (SPEC-006), internal-only, no published port.
 #     See docs/POSTGRES.md.
-#   - prediction-api, learning-engine, and discord-control are commented
-#     stubs with no application code or Dockerfile yet.
+#   - prediction-api is deployed (SPEC-007/008). See docs/PREDICTION_API.md.
+#   - learning-engine is deployed (SPEC-009). See docs/LEARNING_ENGINE.md.
+#   - discord-control is a commented stub (not yet implemented).
 #
 # Philosophy:
 #   - One service, one responsibility.
@@ -146,21 +147,33 @@ services:
       retries: 3
       start_period: 20s
 
-  # --- Application services (not yet implemented) ---
-  # Listed here so the eventual shape of the platform is visible; a future
-  # phase only has to uncomment and fill in `build:` once the service exists.
+  # --- Learning Engine ---
+  # Analyzes prediction history from PostgreSQL and produces structured
+  # learning summaries with observations. No LLM calls — rule-based only.
+  # Internal-only with one published port for local tooling.
+  # See docs/LEARNING_ENGINE.md.
+  learning-engine:
+    build: ../services/learning-engine
+    container_name: learning-engine
+    networks:
+      - internal
+    ports:
+      # Localhost only — for local clients and development tooling.
+      - "127.0.0.1:${LEARNING_ENGINE_PORT}:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
-  # learning-engine:
-  #   build: ../services/learning-engine
-  #   container_name: learning-engine
-  #   networks:
-  #     - internal
-  #   depends_on:
-  #     - postgres
-  #   environment:
-  #     - HOST=${LEARNING_ENGINE_HOST}
-  #     - PORT=${LEARNING_ENGINE_PORT}
-  #   restart: unless-stopped
+  # --- Application services (not yet implemented) ---
 
   # discord-control:
   #   build: ../services/discord-control

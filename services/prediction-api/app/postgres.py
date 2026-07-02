@@ -47,6 +47,14 @@ CREATE TABLE IF NOT EXISTS prediction.prediction_responses (
     FOREIGN KEY (prediction_id)
         REFERENCES prediction.prediction_requests (prediction_id)
 );
+
+CREATE TABLE IF NOT EXISTS prediction.prediction_outcomes (
+    prediction_id   TEXT        PRIMARY KEY,
+    outcome         TEXT        NOT NULL,
+    resolved_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (prediction_id)
+        REFERENCES prediction.prediction_requests (prediction_id)
+);
 """
 
 
