@@ -13,13 +13,14 @@ how they fit together.
 | `postgres` | System of record for predictions, learning history, agent memory, and reflections. | **Deployed** (SPEC-006), internal-only — see [POSTGRES.md](POSTGRES.md) |
 | `prediction-api` | Transforms structured prediction requests into structured AI predictions via `ollama`. | **Deployed** (SPEC-007/008), localhost-only — see [PREDICTION_API.md](PREDICTION_API.md) |
 | `learning-engine` | Reviews past predictions and outcomes in `postgres` to produce structured learning summaries. | **Deployed** (SPEC-009), localhost-only — see [LEARNING_ENGINE.md](LEARNING_ENGINE.md) |
+| `reflection-engine` | Reviews learning analyses and produces structured reflections: strengths, weaknesses, patterns, recommendations. | **Deployed** (SPEC-010), localhost-only — see [REFLECTION_ENGINE.md](REFLECTION_ENGINE.md) |
 | `discord-control` | Human-in-the-loop interface for monitoring and steering agents. | Stubbed — no app code yet |
 
 Services are deployed one at a time, each establishing a stable baseline
 before the next is added. `ollama` was first, `searxng` second, `postgres`
-third, `prediction-api` fourth, and `learning-engine` fifth. Only
-`discord-control` remains a commented stub in `docker-compose.yml`, until
-its own deployment phase.
+third, `prediction-api` fourth, `learning-engine` fifth, and
+`reflection-engine` sixth. Only `discord-control` remains a commented stub
+in `docker-compose.yml`, until its own deployment phase.
 
 Each service exists for exactly one reason and owns exactly one concern. No
 service was added speculatively — anything not directly needed by prediction
@@ -69,14 +70,17 @@ container recreation.
 
 Nothing in this repository starts automatically by default, and services
 are brought up one at a time rather than all together. `ollama`, `searxng`,
-`postgres`, `prediction-api`, and `learning-engine` are currently running
-(`docker compose up -d`); `discord-control` stays commented out in
-`docker-compose.yml` until its own deployment phase, so the file never
+`postgres`, `prediction-api`, `learning-engine`, and `reflection-engine`
+are currently running (`docker compose up -d`); `discord-control` stays
+commented out in `docker-compose.yml` until its own deployment phase, so the file never
 implies something runnable that isn't:
 
 1. `discord-control` needs a real Dockerfile and application code before it
    can be enabled.
-2. `compose/.env` must be populated from `compose/.env.example` with real,
+2. `reflection-engine` depends on `learning-engine: service_healthy` to
+   ensure `learning.learning_summaries` is created before the reflection
+   engine attempts to query it.
+3. `compose/.env` must be populated from `compose/.env.example` with real,
    non-placeholder values before any given service is started.
 
 ## Why Each Service Exists

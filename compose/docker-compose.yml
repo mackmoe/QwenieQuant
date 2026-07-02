@@ -9,6 +9,7 @@
 #     See docs/POSTGRES.md.
 #   - prediction-api is deployed (SPEC-007/008). See docs/PREDICTION_API.md.
 #   - learning-engine is deployed (SPEC-009). See docs/LEARNING_ENGINE.md.
+#   - reflection-engine is deployed (SPEC-010). See docs/REFLECTION_ENGINE.md.
 #   - discord-control is a commented stub (not yet implemented).
 #
 # Philosophy:
@@ -168,6 +169,34 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # --- Reflection Engine ---
+  # Reviews completed learning analyses and produces structured reflections
+  # identifying strengths, weaknesses, patterns, and recommendations.
+  # No LLM calls — rule-based only. Reads from learning schema; writes to
+  # reflection schema. See docs/REFLECTION_ENGINE.md.
+  reflection-engine:
+    build: ../services/reflection-engine
+    container_name: reflection-engine
+    networks:
+      - internal
+    ports:
+      # Localhost only — for local clients and development tooling.
+      - "127.0.0.1:${REFLECTION_ENGINE_PORT}:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      learning-engine:
+        condition: service_healthy
+    environment:
+      POSTGRES_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

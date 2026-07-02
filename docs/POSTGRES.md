@@ -74,7 +74,7 @@ scripts.
 | `prediction` | Generated predictions and their eventual outcomes. | `prediction_requests`, `prediction_responses` (SPEC-008), `prediction_outcomes` (SPEC-009) |
 | `learning` | Review of past predictions and outcomes, used to refine future strategy. | `learning_summaries` (SPEC-009) |
 | `memory` | Persistent agent memory, including embeddings (pgvector). | None yet |
-| `reflection` | Self-review of past decisions and reasoning. | None yet |
+| `reflection` | Structured reflections on learning analyses: strengths, weaknesses, patterns, recommendations. | `reflections` (SPEC-010) |
 | `system` | Platform-level operational records (e.g. job runs, audit history). | None yet |
 
 ## Prediction Tables (SPEC-008)
