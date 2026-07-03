@@ -15,12 +15,13 @@ how they fit together.
 | `learning-engine` | Reviews past predictions and outcomes in `postgres` to produce structured learning summaries. | **Deployed** (SPEC-009), localhost-only — see [LEARNING_ENGINE.md](LEARNING_ENGINE.md) |
 | `reflection-engine` | Reviews learning analyses and produces structured reflections: strengths, weaknesses, patterns, recommendations. | **Deployed** (SPEC-010), localhost-only — see [REFLECTION_ENGINE.md](REFLECTION_ENGINE.md) |
 | `discord-control` | Human-in-the-loop interface for monitoring and steering agents. | **Deployed** (SPEC-011), no published port — see [DISCORD_CONTROL.md](DISCORD_CONTROL.md) |
+| `kalshi-connector` | HTTP abstraction layer for the Kalshi prediction market API. | **Deployed** (SPEC-012), localhost-only — see [KALSHI_CONNECTOR.md](KALSHI_CONNECTOR.md) |
 
 Services are deployed one at a time, each establishing a stable baseline
 before the next is added. `ollama` was first, `searxng` second, `postgres`
 third, `prediction-api` fourth, `learning-engine` fifth, `reflection-engine`
-sixth, and `discord-control` seventh. All seven are defined in
-`docker-compose.yml`.
+sixth, `discord-control` seventh, and `kalshi-connector` eighth. All eight
+are defined in `docker-compose.yml`.
 
 Each service exists for exactly one reason and owns exactly one concern. No
 service was added speculatively — anything not directly needed by prediction
@@ -60,8 +61,9 @@ restart:
 - `searxng_cache` — SearXNG's on-disk query cache.
 
 No other volumes are defined. `prediction-api`, `learning-engine`,
-`reflection-engine`, and `discord-control` are stateless by design — any
-state they need belongs in `postgres`, not in a container volume.
+`reflection-engine`, `discord-control`, and `kalshi-connector` are stateless
+by design — any state they need belongs in `postgres`, not in a container
+volume.
 
 All four volumes are currently in use and verified persistent across
 container recreation.
@@ -98,3 +100,5 @@ and can be started once Discord credentials are set in `compose/.env`:
   improved future predictions.
 - **discord-control** — every autonomous system needs a human override and
   visibility point; Discord is the chosen channel for that.
+- **kalshi-connector** — prediction markets are the execution venue; an
+  abstraction layer isolates the platform from Kalshi's API specifics.

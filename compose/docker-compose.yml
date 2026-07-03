@@ -12,6 +12,8 @@
 #   - reflection-engine is deployed (SPEC-010). See docs/REFLECTION_ENGINE.md.
 #   - discord-control is deployed (SPEC-011). See docs/DISCORD_CONTROL.md.
 #     Requires DISCORD_BOT_TOKEN, DISCORD_GUILD_ID, ALLOWED_USER_IDS in .env.
+#   - kalshi-connector is deployed (SPEC-012). See docs/KALSHI_CONNECTOR.md.
+#     Requires KALSHI_API_KEY and KALSHI_PRIVATE_KEY in .env.
 #
 # Philosophy:
 #   - One service, one responsibility.
@@ -237,3 +239,30 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+  # --- Kalshi Connector ---
+  # HTTP abstraction layer for the Kalshi prediction market API.
+  # Normalizes Kalshi responses into platform-friendly models; no trading
+  # strategy lives here. Requires KALSHI_API_KEY and KALSHI_PRIVATE_KEY.
+  # The container is left stopped by default; start it once credentials are
+  # in .env and KALSHI_ENVIRONMENT is set to "demo" or "production".
+  # See docs/KALSHI_CONNECTOR.md.
+  kalshi-connector:
+    build: ../services/kalshi-connector
+    container_name: kalshi-connector
+    networks:
+      - internal
+    ports:
+      # Localhost only — for local clients and development tooling.
+      - "127.0.0.1:${KALSHI_CONNECTOR_PORT}:8003"
+    environment:
+      KALSHI_API_KEY: ${KALSHI_API_KEY}
+      KALSHI_PRIVATE_KEY: ${KALSHI_PRIVATE_KEY}
+      KALSHI_ENVIRONMENT: ${KALSHI_ENVIRONMENT:-demo}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
