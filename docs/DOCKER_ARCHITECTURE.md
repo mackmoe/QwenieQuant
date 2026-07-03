@@ -14,13 +14,13 @@ how they fit together.
 | `prediction-api` | Transforms structured prediction requests into structured AI predictions via `ollama`. | **Deployed** (SPEC-007/008), localhost-only — see [PREDICTION_API.md](PREDICTION_API.md) |
 | `learning-engine` | Reviews past predictions and outcomes in `postgres` to produce structured learning summaries. | **Deployed** (SPEC-009), localhost-only — see [LEARNING_ENGINE.md](LEARNING_ENGINE.md) |
 | `reflection-engine` | Reviews learning analyses and produces structured reflections: strengths, weaknesses, patterns, recommendations. | **Deployed** (SPEC-010), localhost-only — see [REFLECTION_ENGINE.md](REFLECTION_ENGINE.md) |
-| `discord-control` | Human-in-the-loop interface for monitoring and steering agents. | Stubbed — no app code yet |
+| `discord-control` | Human-in-the-loop interface for monitoring and steering agents. | **Deployed** (SPEC-011), no published port — see [DISCORD_CONTROL.md](DISCORD_CONTROL.md) |
 
 Services are deployed one at a time, each establishing a stable baseline
 before the next is added. `ollama` was first, `searxng` second, `postgres`
-third, `prediction-api` fourth, `learning-engine` fifth, and
-`reflection-engine` sixth. Only `discord-control` remains a commented stub
-in `docker-compose.yml`, until its own deployment phase.
+third, `prediction-api` fourth, `learning-engine` fifth, `reflection-engine`
+sixth, and `discord-control` seventh. All seven are defined in
+`docker-compose.yml`.
 
 Each service exists for exactly one reason and owns exactly one concern. No
 service was added speculatively — anything not directly needed by prediction
@@ -59,9 +59,9 @@ restart:
   volume — see [SEARXNG.md](SEARXNG.md).
 - `searxng_cache` — SearXNG's on-disk query cache.
 
-No other volumes are defined. `prediction-api`, `learning-engine`, and
-`discord-control` are stateless by design — any state they need belongs in
-`postgres`, not in a container volume.
+No other volumes are defined. `prediction-api`, `learning-engine`,
+`reflection-engine`, and `discord-control` are stateless by design — any
+state they need belongs in `postgres`, not in a container volume.
 
 All four volumes are currently in use and verified persistent across
 container recreation.
@@ -71,15 +71,16 @@ container recreation.
 Nothing in this repository starts automatically by default, and services
 are brought up one at a time rather than all together. `ollama`, `searxng`,
 `postgres`, `prediction-api`, `learning-engine`, and `reflection-engine`
-are currently running (`docker compose up -d`); `discord-control` stays
-commented out in `docker-compose.yml` until its own deployment phase, so the file never
-implies something runnable that isn't:
+are currently running (`docker compose up -d`). `discord-control` is defined
+and can be started once Discord credentials are set in `compose/.env`:
 
-1. `discord-control` needs a real Dockerfile and application code before it
-   can be enabled.
-2. `reflection-engine` depends on `learning-engine: service_healthy` to
+1. `reflection-engine` depends on `learning-engine: service_healthy` to
    ensure `learning.learning_summaries` is created before the reflection
    engine attempts to query it.
+2. `discord-control` depends on all three application services being healthy
+   before it attempts to connect. It requires `DISCORD_BOT_TOKEN`,
+   `DISCORD_GUILD_ID`, and `ALLOWED_USER_IDS` in `.env` to start
+   successfully.
 3. `compose/.env` must be populated from `compose/.env.example` with real,
    non-placeholder values before any given service is started.
 

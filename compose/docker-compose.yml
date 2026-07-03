@@ -10,7 +10,8 @@
 #   - prediction-api is deployed (SPEC-007/008). See docs/PREDICTION_API.md.
 #   - learning-engine is deployed (SPEC-009). See docs/LEARNING_ENGINE.md.
 #   - reflection-engine is deployed (SPEC-010). See docs/REFLECTION_ENGINE.md.
-#   - discord-control is a commented stub (not yet implemented).
+#   - discord-control is deployed (SPEC-011). See docs/DISCORD_CONTROL.md.
+#     Requires DISCORD_BOT_TOKEN, DISCORD_GUILD_ID, ALLOWED_USER_IDS in .env.
 #
 # Philosophy:
 #   - One service, one responsibility.
@@ -202,16 +203,37 @@ services:
       retries: 3
       start_period: 20s
 
-  # --- Application services (not yet implemented) ---
-
-  # discord-control:
-  #   build: ../services/discord-control
-  #   container_name: discord-control
-  #   networks:
-  #     - internal
-  #   depends_on:
-  #     - prediction-api
-  #   environment:
-  #     - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
-  #     - DISCORD_GUILD_ID=${DISCORD_GUILD_ID}
-  #   restart: unless-stopped
+  # --- Discord Control ---
+  # Operator interface: slash commands that forward to platform services.
+  # Requires a valid DISCORD_BOT_TOKEN and DISCORD_GUILD_ID. The container
+  # is left stopped by default; start it once credentials are in .env.
+  # See docs/DISCORD_CONTROL.md.
+  discord-control:
+    build: ../services/discord-control
+    container_name: discord-control
+    networks:
+      - internal
+    depends_on:
+      prediction-api:
+        condition: service_healthy
+      learning-engine:
+        condition: service_healthy
+      reflection-engine:
+        condition: service_healthy
+    environment:
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID}
+      ALLOWED_USER_IDS: ${ALLOWED_USER_IDS}
+      PREDICTION_API_URL: "http://prediction-api:8000"
+      LEARNING_ENGINE_URL: "http://learning-engine:8001"
+      REFLECTION_ENGINE_URL: "http://reflection-engine:8002"
+      OLLAMA_URL: "http://ollama:11434"
+      SEARXNG_URL: "http://searxng:8080"
+    restart: unless-stopped
+    healthcheck:
+      # The bot writes /tmp/bot_ready when on_ready fires successfully.
+      test: ["CMD", "test", "-f", "/tmp/bot_ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
