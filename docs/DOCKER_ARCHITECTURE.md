@@ -16,12 +16,13 @@ how they fit together.
 | `reflection-engine` | Reviews learning analyses and produces structured reflections: strengths, weaknesses, patterns, recommendations. | **Deployed** (SPEC-010), localhost-only — see [REFLECTION_ENGINE.md](REFLECTION_ENGINE.md) |
 | `discord-control` | Human-in-the-loop interface for monitoring and steering agents. | **Deployed** (SPEC-011), no published port — see [DISCORD_CONTROL.md](DISCORD_CONTROL.md) |
 | `kalshi-connector` | HTTP abstraction layer for the Kalshi prediction market API. | **Deployed** (SPEC-012), localhost-only — see [KALSHI_CONNECTOR.md](KALSHI_CONNECTOR.md) |
+| `risk-manager` | Evaluates predictions against risk rules; determines whether a trade is permitted. | **Deployed** (SPEC-013), localhost-only — see [RISK_MANAGER.md](RISK_MANAGER.md) |
 
 Services are deployed one at a time, each establishing a stable baseline
 before the next is added. `ollama` was first, `searxng` second, `postgres`
 third, `prediction-api` fourth, `learning-engine` fifth, `reflection-engine`
-sixth, `discord-control` seventh, and `kalshi-connector` eighth. All eight
-are defined in `docker-compose.yml`.
+sixth, `discord-control` seventh, `kalshi-connector` eighth, and
+`risk-manager` ninth. All nine are defined in `docker-compose.yml`.
 
 Each service exists for exactly one reason and owns exactly one concern. No
 service was added speculatively — anything not directly needed by prediction
@@ -61,9 +62,9 @@ restart:
 - `searxng_cache` — SearXNG's on-disk query cache.
 
 No other volumes are defined. `prediction-api`, `learning-engine`,
-`reflection-engine`, `discord-control`, and `kalshi-connector` are stateless
-by design — any state they need belongs in `postgres`, not in a container
-volume.
+`reflection-engine`, `discord-control`, `kalshi-connector`, and
+`risk-manager` are stateless by design — any state they need belongs in
+`postgres`, not in a container volume.
 
 All four volumes are currently in use and verified persistent across
 container recreation.
@@ -102,3 +103,5 @@ and can be started once Discord credentials are set in `compose/.env`:
   visibility point; Discord is the chosen channel for that.
 - **kalshi-connector** — prediction markets are the execution venue; an
   abstraction layer isolates the platform from Kalshi's API specifics.
+- **risk-manager** — a gating layer that ensures no trade is executed
+  without satisfying configurable safety thresholds; dry-run by default.

@@ -14,6 +14,8 @@
 #     Requires DISCORD_BOT_TOKEN, DISCORD_GUILD_ID, ALLOWED_USER_IDS in .env.
 #   - kalshi-connector is deployed (SPEC-012). See docs/KALSHI_CONNECTOR.md.
 #     Requires KALSHI_API_KEY and KALSHI_PRIVATE_KEY in .env.
+#   - risk-manager is deployed (SPEC-013). See docs/RISK_MANAGER.md.
+#     DRY_RUN=true by default; set to false in .env to enable live approvals.
 #
 # Philosophy:
 #   - One service, one responsibility.
@@ -262,6 +264,44 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # --- Risk Manager ---
+  # Evaluates prediction proposals against configurable risk rules and
+  # determines whether a trade is permitted. Fetches account state from
+  # kalshi-connector; persists decisions to PostgreSQL.
+  # DRY_RUN=true by default — no trade is approved until explicitly enabled.
+  # See docs/RISK_MANAGER.md.
+  risk-manager:
+    build: ../services/risk-manager
+    container_name: risk-manager
+    networks:
+      - internal
+    ports:
+      # Localhost only — for local clients and development tooling.
+      - "127.0.0.1:${RISK_MANAGER_PORT}:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kalshi-connector:
+        condition: service_healthy
+    environment:
+      KALSHI_CONNECTOR_URL: "http://kalshi-connector:8003"
+      POSTGRES_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      MIN_CONFIDENCE: ${MIN_CONFIDENCE:-0.60}
+      MIN_EXPECTED_VALUE: ${MIN_EXPECTED_VALUE:-0.01}
+      MIN_EDGE: ${MIN_EDGE:-0.05}
+      MAX_POSITION_PERCENT: ${MAX_POSITION_PERCENT:-5.0}
+      MAX_OPEN_POSITIONS: ${MAX_OPEN_POSITIONS:-10}
+      MAX_DAILY_LOSS: ${MAX_DAILY_LOSS:-10000}
+      MAX_CONSECUTIVE_LOSSES: ${MAX_CONSECUTIVE_LOSSES:-5}
+      DRY_RUN: ${DRY_RUN:-true}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
