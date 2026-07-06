@@ -1,4 +1,11 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from app.models import PredictionRequest
+
+if TYPE_CHECKING:
+    from app.searxng import SearchResult
 
 
 _SYSTEM_PROMPT = """\
@@ -11,6 +18,10 @@ Rules:
 - "confidence" must be a float between 0.0 (no confidence) and 1.0 (certainty).
 - "reasoning" must explain your conclusion in 2-4 sentences.
 - "key_factors" must list 2-5 specific factors that most influenced your prediction.
+- If "Current Evidence" is provided, use it to inform your prediction.
+- If no "Current Evidence" is provided, rely on your internal knowledge.
+- Never invent evidence that was not supplied.
+- Never claim to have searched the internet when no evidence was provided.
 
 Response schema:
 {
@@ -21,7 +32,10 @@ Response schema:
 }"""
 
 
-def build_prediction_prompt(request: PredictionRequest) -> tuple[str, str]:
+def build_prediction_prompt(
+    request: PredictionRequest,
+    evidence: list[SearchResult] | None = None,
+) -> tuple[str, str]:
     """Return (system_prompt, user_prompt) for a prediction request."""
     parts = [
         f"Question: {request.question}",
@@ -37,6 +51,12 @@ def build_prediction_prompt(request: PredictionRequest) -> tuple[str, str]:
 
     if request.resolution_date:
         parts.append(f"Resolution date: {request.resolution_date}")
+
+    if evidence:
+        bullet_lines = "\n".join(
+            f"* {r.snippet}" for r in evidence if r.snippet
+        )
+        parts.append(f"\nCurrent Evidence:\n{bullet_lines}")
 
     parts.append("\nEvaluate this prediction and respond with JSON only.")
 

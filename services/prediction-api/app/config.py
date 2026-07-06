@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     # on CPU this can run 2-4 minutes before the first byte is returned.
     ollama_timeout: int = 300
 
+    searxng_url: str = "http://searxng:8080"
+    searxng_timeout: float = 10.0
+    searxng_max_results: int = 5
+
     postgres_url: str = ""
     prompt_version: str = "1.0"
 

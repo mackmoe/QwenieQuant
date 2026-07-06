@@ -1,3 +1,4 @@
+import logging
 import time
 
 from fastapi import APIRouter, HTTPException
@@ -9,6 +10,7 @@ from app.models import PredictionRequest, PredictionResponse
 from app.prompt_builder import build_prediction_prompt
 from app.validators import validate_llm_response
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -22,9 +24,26 @@ async def predict(request: PredictionRequest) -> PredictionResponse:
     settings = get_settings()
 
     await postgres.fetch_historical_context(request.question)
-    await searxng.search(request.question)
 
-    system_prompt, user_prompt = build_prediction_prompt(request)
+    # Deterministic search decision — model is never consulted.
+    evidence: list[searxng.SearchResult] = []
+    if searxng.needs_search(request.question, request.category.value):
+        logger.info(
+            "question=%r category=%s search=required",
+            request.question[:80],
+            request.category.value,
+        )
+        evidence = await searxng.search(request.question)
+        if not evidence:
+            logger.info("search returned no results — continuing without evidence")
+    else:
+        logger.info(
+            "question=%r category=%s search=skipped",
+            request.question[:80],
+            request.category.value,
+        )
+
+    system_prompt, user_prompt = build_prediction_prompt(request, evidence or None)
 
     start = time.monotonic()
     try:
@@ -35,6 +54,7 @@ async def predict(request: PredictionRequest) -> PredictionResponse:
 
     llm_prediction = validate_llm_response(content, request)
 
+    sources = [r.url for r in evidence if r.url]
     response = PredictionResponse(
         question=request.question,
         prediction=llm_prediction.prediction,
@@ -42,6 +62,8 @@ async def predict(request: PredictionRequest) -> PredictionResponse:
         reasoning=llm_prediction.reasoning,
         key_factors=llm_prediction.key_factors,
         model=settings.ollama_model,
+        search_context_used=bool(evidence),
+        sources=sources,
     )
 
     await postgres.persist_prediction(request, response, execution_ms)
