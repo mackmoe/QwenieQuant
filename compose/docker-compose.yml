@@ -13,7 +13,7 @@
 #   - discord-control is deployed (SPEC-011). See docs/DISCORD_CONTROL.md.
 #     Requires DISCORD_BOT_TOKEN, DISCORD_GUILD_ID, ALLOWED_USER_IDS in .env.
 #   - kalshi-connector is deployed (SPEC-012). See docs/KALSHI_CONNECTOR.md.
-#     Requires KALSHI_API_KEY and KALSHI_PRIVATE_KEY in .env.
+#     Requires KALSHI_API_KEY and KALSHI_PRIVATE_KEY_PATH in .env (HOTFIX-002).
 #   - risk-manager is deployed (SPEC-013). See docs/RISK_MANAGER.md.
 #     DRY_RUN=true by default; set to false in .env to enable live approvals.
 #   - opportunity-engine is deployed (SPEC-015). See docs/OPPORTUNITY_ENGINE.md.
@@ -247,9 +247,8 @@ services:
   # --- Kalshi Connector ---
   # HTTP abstraction layer for the Kalshi prediction market API.
   # Normalizes Kalshi responses into platform-friendly models; no trading
-  # strategy lives here. Requires KALSHI_API_KEY and KALSHI_PRIVATE_KEY.
-  # The container is left stopped by default; start it once credentials are
-  # in .env and KALSHI_ENVIRONMENT is set to "demo" or "production".
+  # strategy lives here. Requires KALSHI_API_KEY and KALSHI_PRIVATE_KEY_PATH.
+  # Set KALSHI_ENVIRONMENT=production or demo in .env.
   # See docs/KALSHI_CONNECTOR.md.
   kalshi-connector:
     build: ../services/kalshi-connector
@@ -259,10 +258,14 @@ services:
     ports:
       # Localhost only — for local clients and development tooling.
       - "127.0.0.1:${KALSHI_CONNECTOR_PORT}:8003"
+    volumes:
+      # Mount the private key file read-only inside the container.
+      # The path inside the container matches KALSHI_PRIVATE_KEY_PATH.
+      - ./keys/kalshi_private.key:/app/keys/kalshi_private.key:ro
     environment:
       KALSHI_API_KEY: ${KALSHI_API_KEY}
-      KALSHI_PRIVATE_KEY: ${KALSHI_PRIVATE_KEY}
-      KALSHI_ENVIRONMENT: ${KALSHI_ENVIRONMENT:-demo}
+      KALSHI_PRIVATE_KEY_PATH: ${KALSHI_PRIVATE_KEY_PATH}
+      KALSHI_ENVIRONMENT: ${KALSHI_ENVIRONMENT:-production}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]

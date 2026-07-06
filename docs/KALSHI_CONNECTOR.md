@@ -61,7 +61,7 @@ Returns service status and Kalshi connectivity.
     "status": "ok",
     "credentials_configured": true,
     "kalshi_reachable": true,
-    "environment": "demo",
+    "environment": "production",
     "version": "0.1.0"
 }
 ```
@@ -248,7 +248,7 @@ backoff. Auth errors (`401`) and not-found errors (`404`) are not retried.
 | `KALSHI_API_KEY` | Yes | — | API key from Kalshi Developer Portal |
 | `KALSHI_PRIVATE_KEY` | Yes* | — | PEM content; escape newlines as `\n` in env var |
 | `KALSHI_PRIVATE_KEY_PATH` | Yes* | — | Path to PEM file (alternative to `KALSHI_PRIVATE_KEY`) |
-| `KALSHI_ENVIRONMENT` | No | `demo` | `"demo"` or `"production"` |
+| `KALSHI_ENVIRONMENT` | No | `production` | `"production"` or `"demo"` |
 | `HTTP_TIMEOUT` | No | `30.0` | Default request timeout in seconds |
 | `MAX_RETRIES` | No | `3` | Number of retry attempts on transient failures |
 
@@ -266,14 +266,29 @@ and production.
 
 ### Private Key Format
 
-The RSA private key must be in PKCS#8 PEM format. For Docker/compose, use a
-single-line representation with escaped newlines:
+The RSA private key must be in PKCS#8 PEM format. The recommended approach
+for Docker/compose is to mount the key file read-only and use `KALSHI_PRIVATE_KEY_PATH`:
+
+```yaml
+# docker-compose.yml
+volumes:
+  - ./keys/kalshi_private.key:/app/keys/kalshi_private.key:ro
+environment:
+  KALSHI_PRIVATE_KEY_PATH: /app/keys/kalshi_private.key
+```
 
 ```
-KALSHI_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n
+# .env
+KALSHI_PRIVATE_KEY_PATH=/app/keys/kalshi_private.key
 ```
 
-Alternatively, mount the key file and use `KALSHI_PRIVATE_KEY_PATH`.
+`KALSHI_PRIVATE_KEY` (inline PEM with escaped newlines) is also supported but
+is fragile in practice — a stale file path accidentally left in that variable
+passes a truthy check and silently breaks auth. Use `KALSHI_PRIVATE_KEY_PATH`
+for production deployments.
+
+The key file should be in `compose/keys/` which is excluded from git via
+`.gitignore`. Never commit the key file.
 
 ## Deployment
 
@@ -369,3 +384,12 @@ queries.
 populated only if Kalshi returns it from that endpoint. A future phase could
 compute portfolio value from positions or use a dedicated portfolio endpoint
 if Kalshi adds one.
+
+**8. `kalshi_reachable: true` does not mean authentication succeeded.** The
+`/health` endpoint probes reachability by making an unauthenticated GET to the
+base URL. Kalshi returns `401` for unauthenticated requests; the connector
+treats any HTTP response (including 401) as "reachable" because the server is
+up. A `401` on authenticated endpoints (`/account`, `/positions`) indicates a
+credential mismatch — the API key and private key must be from the same Kalshi
+key pair. Verify on the Kalshi developer portal that the API key ID matches the
+key pair used to generate the PEM file.
