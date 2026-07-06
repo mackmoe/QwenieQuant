@@ -16,6 +16,8 @@
 #     Requires KALSHI_API_KEY and KALSHI_PRIVATE_KEY in .env.
 #   - risk-manager is deployed (SPEC-013). See docs/RISK_MANAGER.md.
 #     DRY_RUN=true by default; set to false in .env to enable live approvals.
+#   - opportunity-engine is deployed (SPEC-015). See docs/OPPORTUNITY_ENGINE.md.
+#     Scans Kalshi markets and ranks them by priority tier for the prediction pipeline.
 #
 # Philosophy:
 #   - One service, one responsibility.
@@ -302,6 +304,40 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # --- Opportunity Engine ---
+  # Discovers active Kalshi markets and assigns priority tiers using
+  # deterministic scoring (time-to-expiry, volume, spread, liquidity,
+  # activity). No AI, no trading — pure analysis and ranking.
+  # The scheduler runs on a configurable interval; POST /refresh triggers
+  # an immediate scan. See docs/OPPORTUNITY_ENGINE.md.
+  opportunity-engine:
+    build: ../services/opportunity-engine
+    container_name: opportunity-engine
+    networks:
+      - internal
+    ports:
+      # Localhost only — for local clients and development tooling.
+      - "127.0.0.1:${OPPORTUNITY_ENGINE_PORT}:8005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kalshi-connector:
+        condition: service_healthy
+    environment:
+      KALSHI_CONNECTOR_URL: "http://kalshi-connector:8003"
+      POSTGRES_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      DISCOVERY_INTERVAL_SECONDS: ${DISCOVERY_INTERVAL_SECONDS:-300}
+      MAX_TIER2_MARKETS: ${MAX_TIER2_MARKETS:-100}
+      MAX_TIER3_MARKETS: ${MAX_TIER3_MARKETS:-30}
+      MIN_PRIORITY_SCORE: ${MIN_PRIORITY_SCORE:-5.0}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
