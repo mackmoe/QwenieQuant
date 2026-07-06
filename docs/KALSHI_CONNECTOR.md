@@ -20,16 +20,17 @@ API structure and from changes to it.
 - Places limit orders
 - Cancels orders
 - Normalizes all Kalshi responses to platform-friendly models
+- Periodically polls PostgreSQL for unresolved predictions and records resolved outcomes (SPEC-018)
+- Triggers the Learning Engine after each outcome is recorded (fire-and-forget)
 
 **What it does not do:**
 - Make trading decisions
 - Implement bankroll management or risk management
 - Call the Prediction API
-- Access PostgreSQL
-- Implement learning or reflection
+- Modify existing prediction records
+- Perform learning or reflection (triggers Learning Engine, does not implement it)
 
-The connector is purely an API abstraction. Trading strategy belongs
-elsewhere.
+The connector is an API abstraction layer and outcome collection agent.
 
 ## Authentication
 
@@ -226,6 +227,56 @@ Request:
 
 Response: the cancelled order with `"status": "canceled"`.
 
+## Outcome Collection (SPEC-018)
+
+The Kalshi Connector runs a background outcome polling loop that continuously compares platform predictions against reality.
+
+### How it works
+
+Every `OUTCOME_POLL_SECONDS` (default 300 seconds):
+
+1. **Discover** — Query `prediction.prediction_requests` for all predictions with a `market_id` that do not yet have a row in `prediction.prediction_outcomes`.
+2. **Query** — For each unresolved prediction, call `GET /market/{market_id}` on the Kalshi API to check resolution status.
+3. **Skip** — If `market.result` is `null`, the market is still open. Move to the next prediction.
+4. **Persist** — If `market.result` is set (e.g. `"yes"` or `"no"`), insert a row into `prediction.prediction_outcomes` with:
+   - `predicted_value` — what our model predicted
+   - `actual_value` — what Kalshi says the result is
+   - `prediction_correct` — `True` if they match (case-insensitive), `False` otherwise
+   - `market_close_time` — when the market closed
+   - `collected_time` — when this outcome was recorded
+   - `metadata` — question and confidence from the original prediction
+5. **Trigger** — After persisting a new outcome, POST `{}` to `{LEARNING_ENGINE_URL}/analyze` (fire-and-forget). If the Learning Engine is unavailable, log the failure and continue; outcome collection never blocks on learning.
+
+### Duplicate prevention
+
+`ON CONFLICT (prediction_id) DO NOTHING` ensures each prediction produces at most one outcome row, even if the poller cycles while a previous insert is in-flight.
+
+### Failure recovery
+
+| Failure | Behaviour |
+|---|---|
+| Kalshi unreachable for a specific market | Log warning; skip that prediction; continue with the rest |
+| PostgreSQL unavailable at startup | Outcome collection disabled for this run; service starts normally |
+| Learning Engine unavailable | Log warning; outcome is still recorded; next poll proceeds |
+| Unexpected exception in poll loop | Log exception; sleep; retry next cycle |
+
+### PostgreSQL schema
+
+The connector extends the existing `prediction.prediction_outcomes` table (first created by `prediction-api`) with outcome-specific columns:
+
+```sql
+-- Extended columns added by kalshi-connector on startup (ADD COLUMN IF NOT EXISTS)
+ALTER TABLE prediction.prediction_outcomes ADD COLUMN IF NOT EXISTS market_id TEXT;
+ALTER TABLE prediction.prediction_outcomes ADD COLUMN IF NOT EXISTS predicted_value TEXT;
+ALTER TABLE prediction.prediction_outcomes ADD COLUMN IF NOT EXISTS actual_value TEXT;
+ALTER TABLE prediction.prediction_outcomes ADD COLUMN IF NOT EXISTS prediction_correct BOOLEAN;
+ALTER TABLE prediction.prediction_outcomes ADD COLUMN IF NOT EXISTS market_close_time TIMESTAMPTZ;
+ALTER TABLE prediction.prediction_outcomes ADD COLUMN IF NOT EXISTS collected_time TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE prediction.prediction_outcomes ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}';
+```
+
+---
+
 ## Error Handling
 
 All Kalshi errors are mapped to consistent HTTP responses:
@@ -251,6 +302,10 @@ backoff. Auth errors (`401`) and not-found errors (`404`) are not retried.
 | `KALSHI_ENVIRONMENT` | No | `production` | `"production"` or `"demo"` |
 | `HTTP_TIMEOUT` | No | `30.0` | Default request timeout in seconds |
 | `MAX_RETRIES` | No | `3` | Number of retry attempts on transient failures |
+| `POSTGRES_URL` | No | — | PostgreSQL connection string; outcome collection disabled if unset |
+| `OUTCOME_COLLECTION_ENABLED` | No | `true` | Set to `false` to disable outcome polling |
+| `OUTCOME_POLL_SECONDS` | No | `300` | Seconds between outcome polling cycles |
+| `LEARNING_ENGINE_URL` | No | `http://learning-engine:8001` | Learning Engine base URL for outcome trigger |
 
 *One of `KALSHI_PRIVATE_KEY` or `KALSHI_PRIVATE_KEY_PATH` is required.
 
@@ -316,7 +371,9 @@ services/kalshi-connector/
 │   ├── positions.py       — Position, Account models + normalization
 │   ├── settlements.py     — Settlement model + normalization
 │   ├── routes.py          — All FastAPI route handlers
-│   └── health.py          — HealthStatus model + get_health()
+│   ├── health.py          — HealthStatus model + get_health()
+│   ├── postgres.py        — Pool init, outcome table extension, persist_outcome, get_unresolved
+│   └── outcomes.py        — Outcome polling loop, _determine_correctness, _trigger_learning
 ├── tests/
 │   ├── test_authentication.py  — 10 tests: signing, header construction
 │   ├── test_client.py          — 19 tests: HTTP status handling, retries
@@ -324,13 +381,14 @@ services/kalshi-connector/
 │   ├── test_orders.py          — 18 tests: models, normalization, placement
 │   ├── test_positions.py       — 13 tests: normalization, account
 │   ├── test_settlements.py     — 9 tests: normalization, async functions
-│   └── test_routes.py          — 20 tests: all endpoints, error handling
+│   ├── test_routes.py          — 20 tests: all endpoints, error handling
+│   └── test_outcomes.py        — 18 tests: outcome collection, learning trigger, failure recovery
 ├── pytest.ini          — asyncio_mode = auto
 ├── Dockerfile
 └── requirements.txt
 ```
 
-Total: 110 tests passing.
+Total: 128 tests passing.
 
 ## Logging
 
@@ -384,6 +442,8 @@ queries.
 populated only if Kalshi returns it from that endpoint. A future phase could
 compute portfolio value from positions or use a dedicated portfolio endpoint
 if Kalshi adds one.
+
+**9. `prediction.prediction_outcomes` table schema conflict.** The `prediction-api` service creates `prediction.prediction_outcomes` with a minimal 3-column schema (prediction_id, outcome, resolved_at) and a FK to `prediction_requests`. The Kalshi Connector extends this table using `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` on startup, which is safe regardless of which service starts first. When kalshi-connector starts first, it creates the table without the FK; when prediction-api starts first, the FK is preserved. Either way, the INSERT always provides both legacy columns and the new extended columns, so both schemas are compatible.
 
 **8. `kalshi_reachable: true` does not mean authentication succeeded.** The
 `/health` endpoint probes reachability by making an unauthenticated GET to the
