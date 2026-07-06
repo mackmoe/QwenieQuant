@@ -18,6 +18,8 @@
 #     DRY_RUN=true by default; set to false in .env to enable live approvals.
 #   - opportunity-engine is deployed (SPEC-015). See docs/OPPORTUNITY_ENGINE.md.
 #     Scans Kalshi markets and ranks them by priority tier for the prediction pipeline.
+#   - prediction-queue is deployed (SPEC-016). See docs/PREDICTION_QUEUE.md.
+#     Traffic controller: ordered priority queue of markets awaiting prediction.
 #
 # Philosophy:
 #   - One service, one responsibility.
@@ -307,6 +309,40 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # --- Prediction Queue Manager ---
+  # Traffic controller for the prediction pipeline. Maintains a priority-ordered
+  # queue of markets awaiting prediction. Prevents duplicate entries, auto-expires
+  # stale opportunities, and exposes GET /queue/next for future orchestration.
+  # No AI, no trading. See docs/PREDICTION_QUEUE.md.
+  prediction-queue:
+    build: ../services/prediction-queue
+    container_name: prediction-queue
+    networks:
+      - internal
+    ports:
+      # Localhost only — for local clients and development tooling.
+      - "127.0.0.1:${PREDICTION_QUEUE_PORT}:8006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opportunity-engine:
+        condition: service_healthy
+    environment:
+      POSTGRES_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      OPPORTUNITY_ENGINE_URL: "http://opportunity-engine:8005"
+      QUEUE_MAX_SIZE: ${QUEUE_MAX_SIZE:-100}
+      QUEUE_REFRESH_SECONDS: ${QUEUE_REFRESH_SECONDS:-30}
+      QUEUE_EXPIRATION_BUFFER_SECONDS: ${QUEUE_EXPIRATION_BUFFER_SECONDS:-60}
+      QUEUE_PRIORITY_WEIGHT: ${QUEUE_PRIORITY_WEIGHT:-0.70}
+      QUEUE_WAIT_WEIGHT: ${QUEUE_WAIT_WEIGHT:-0.30}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

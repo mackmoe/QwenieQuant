@@ -18,12 +18,14 @@ how they fit together.
 | `kalshi-connector` | HTTP abstraction layer for the Kalshi prediction market API. | **Deployed** (SPEC-012), localhost-only — see [KALSHI_CONNECTOR.md](KALSHI_CONNECTOR.md) |
 | `risk-manager` | Evaluates predictions against risk rules; determines whether a trade is permitted. | **Deployed** (SPEC-013), localhost-only — see [RISK_MANAGER.md](RISK_MANAGER.md) |
 | `opportunity-engine` | Discovers active Kalshi markets and ranks them by priority tier using deterministic scoring. | **Deployed** (SPEC-015), localhost-only — see [OPPORTUNITY_ENGINE.md](OPPORTUNITY_ENGINE.md) |
+| `prediction-queue` | Traffic controller: maintains a priority-ordered queue of markets awaiting prediction. | **Deployed** (SPEC-016), localhost-only — see [PREDICTION_QUEUE.md](PREDICTION_QUEUE.md) |
 
 Services are deployed one at a time, each establishing a stable baseline
 before the next is added. `ollama` was first, `searxng` second, `postgres`
 third, `prediction-api` fourth, `learning-engine` fifth, `reflection-engine`
 sixth, `discord-control` seventh, `kalshi-connector` eighth, `risk-manager`
-ninth, and `opportunity-engine` tenth. All ten are defined in `docker-compose.yml`.
+ninth, `opportunity-engine` tenth, and `prediction-queue` eleventh. All eleven
+are defined in `docker-compose.yml`.
 
 Each service exists for exactly one reason and owns exactly one concern. No
 service was added speculatively — anything not directly needed by prediction
@@ -64,8 +66,8 @@ restart:
 
 No other volumes are defined. `prediction-api`, `learning-engine`,
 `reflection-engine`, `discord-control`, `kalshi-connector`,
-`risk-manager`, and `opportunity-engine` are stateless by design — any
-state they need belongs in `postgres`, not in a container volume.
+`risk-manager`, `opportunity-engine`, and `prediction-queue` are stateless
+by design — any state they need belongs in `postgres`, not in a container volume.
 
 All four volumes are currently in use and verified persistent across
 container recreation.
@@ -108,3 +110,6 @@ and can be started once Discord credentials are set in `compose/.env`:
   without satisfying configurable safety thresholds; dry-run by default.
 - **opportunity-engine** — discovers which Kalshi markets are worth predicting
   by ranking all active markets with a deterministic score; no AI, no trades.
+- **prediction-queue** — ensures expensive reasoning is always spent on the
+  highest-value opportunities by maintaining a deterministic, priority-ordered
+  work queue; the heartbeat of the prediction pipeline.
