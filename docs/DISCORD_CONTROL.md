@@ -126,9 +126,26 @@ uses a 330 s override to accommodate qwen3:8b's thinking chain.
 | `SEARXNG_URL` | No | Default: `http://searxng:8080` |
 | `HTTP_TIMEOUT` | No | Default: `60.0` (seconds; `/predict` overrides to 330 s) |
 
-`ALLOWED_USER_IDS` accepts comma-separated integers
-(`123456789012345678,987654321098765432`) or a JSON array
-(`[123456789012345678, 987654321098765432]`).
+### ALLOWED_USER_IDS format
+
+`ALLOWED_USER_IDS` accepts plain comma-separated Discord user snowflakes.
+Whitespace around commas is ignored.
+
+**Single user:**
+
+```env
+ALLOWED_USER_IDS=444992730335019019
+```
+
+**Multiple users:**
+
+```env
+ALLOWED_USER_IDS=444992730335019019,123456789012345678
+```
+
+Do not use JSON array syntax (`[...]`) or quoted strings — plain integers
+and commas only. Empty segments (consecutive commas or a leading/trailing
+comma) are rejected at startup.
 
 ## Deployment
 
