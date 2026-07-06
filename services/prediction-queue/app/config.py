@@ -13,6 +13,13 @@ class Settings(BaseSettings):
     queue_priority_weight: float = 0.70
     queue_wait_weight: float = 0.30
 
+    workflow_enabled: bool = True
+    workflow_interval_seconds: int = 30
+    dry_run: bool = True
+    prediction_api_url: str = "http://prediction-api:8000"
+    risk_manager_url: str = "http://risk-manager:8004"
+    kalshi_connector_url: str = "http://kalshi-connector:8003"
+
     version: str = "0.1.0"
 
     model_config = {"env_file": ".env", "case_sensitive": False}

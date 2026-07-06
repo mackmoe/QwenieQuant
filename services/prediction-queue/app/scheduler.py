@@ -73,3 +73,28 @@ async def scheduler_loop(pool, settings: Settings) -> None:
         except Exception:
             logger.exception("Scheduler refresh error")
         await asyncio.sleep(settings.queue_refresh_seconds)
+
+
+async def workflow_loop(pool, http, settings: Settings) -> None:
+    """
+    Autonomous prediction workflow loop.
+
+    Runs every WORKFLOW_INTERVAL_SECONDS.  Each iteration picks the
+    highest-priority QUEUED entry and runs the full predict/evaluate/trade
+    cycle.  Skipped entirely when WORKFLOW_ENABLED=false.
+    """
+    from app import workflow as workflow_module
+
+    logger.info(
+        "Workflow loop starting; first iteration in %ds (enabled=%s)",
+        settings.workflow_interval_seconds,
+        settings.workflow_enabled,
+    )
+    await asyncio.sleep(settings.workflow_interval_seconds)
+    while True:
+        if settings.workflow_enabled:
+            try:
+                await workflow_module.run_iteration(pool, http, settings)
+            except Exception:
+                logger.exception("Workflow iteration error")
+        await asyncio.sleep(settings.workflow_interval_seconds)

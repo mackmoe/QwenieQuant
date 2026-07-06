@@ -33,43 +33,57 @@ Opportunity Engine → POST /queue/add
                     │  recalculate_   │
                     │  priorities()   │
                     └────────┬────────┘
+                             │                ┌──────────────────────┐
+                   postgres  │                │  workflow loop        │
+                   (queue.   │                │  every WORKFLOW_      │
+                   prediction│                │  INTERVAL_SECONDS     │
+                   _queue)   │                │                       │
+                             │                │  get_next()           │
+                             │                │    → /predict         │
+                             │                │    → /evaluate        │
+                             │                │    → /order (live)    │
+                             │                │    → postgres persist │
+                             │                │    → mark_completed() │
+                             │                └──────────────────────┘
                              │
-                   postgres (queue.prediction_queue)
-                          upserted on each refresh
-
-Future orchestrator → GET /queue/next
+                   postgres (queue.workflow_results)
+                          written after every workflow cycle
 ```
 
 ### Components
 
 | Module | Responsibility |
 |---|---|
-| `app/config.py` | Settings: capacity, weights, intervals, URLs |
+| `app/config.py` | Settings: capacity, weights, intervals, service URLs |
 | `app/models.py` | `QueueEntry`, `QueueState`, request/response models |
-| `app/queue.py` | In-memory queue: add, expire, recalculate, cancel |
-| `app/postgres.py` | Pool init, `upsert_entries`, `is_reachable` |
-| `app/scheduler.py` | Background loop + `run_refresh`; module-level `_last_refresh` |
+| `app/queue.py` | In-memory queue: add, expire, recalculate, cancel, state transitions |
+| `app/postgres.py` | Pool init, `upsert_entries`, `persist_workflow_result`, `is_reachable` |
+| `app/scheduler.py` | Refresh loop (`scheduler_loop`) + workflow loop (`workflow_loop`) |
+| `app/workflow.py` | One autonomous prediction cycle: predict → evaluate → trade → persist |
 | `app/health.py` | Aggregates postgres status + queue stats |
 | `app/routes.py` | FastAPI routes; `set_dependencies()` for testing |
-| `app/main.py` | Lifespan: init pool → start scheduler |
+| `app/main.py` | Lifespan: init pool + httpx client → start scheduler + workflow tasks |
 
 ## Queue Lifecycle
 
 Every market opportunity moves through exactly one state at a time:
 
 ```
-DISCOVERED   (future: assigned before QUEUED, not used in SPEC-016)
+DISCOVERED   (assigned before QUEUED, not used in SPEC-016/017)
     ↓
 QUEUED       ← default initial state from POST /queue/add
     ↓
-IN_PROGRESS  ← future: claimed by an orchestrator
+IN_PROGRESS  ← claimed by the workflow loop (mark_in_progress)
     ↓
-COMPLETED    ← future: prediction recorded
+COMPLETED    ← prediction cycle finished (mark_completed)
+
+Retry path:
+  IN_PROGRESS → QUEUED  ← if prediction-api or risk-manager unreachable
 
 Terminal states (from any active state):
   EXPIRED    ← expiration window passed during a refresh
   CANCELLED  ← explicitly removed via DELETE /queue/{market_id}
-  FAILED     ← future: prediction attempt failed
+  FAILED     ← unexpected error in workflow; entry will not be retried
 ```
 
 Active states are `QUEUED` and `IN_PROGRESS`. Terminal states are permanent. A terminated entry stays in the list for the postgres upsert record and does not count toward queue capacity.
@@ -310,14 +324,95 @@ The table is upserted on every scheduler refresh and after every `POST /queue/ad
 | `QUEUE_EXPIRATION_BUFFER_SECONDS` | `60` | Seconds before deadline to mark entry EXPIRED |
 | `QUEUE_PRIORITY_WEIGHT` | `0.70` | Weight applied to the Opportunity Engine score |
 | `QUEUE_WAIT_WEIGHT` | `0.30` | Weight applied to queue-age wait bonus |
+| `WORKFLOW_ENABLED` | `true` | Set to `false` to disable the autonomous workflow loop |
+| `WORKFLOW_INTERVAL_SECONDS` | `30` | Seconds between workflow iterations |
+| `DRY_RUN` | `true` | Set to `false` to allow real orders (shared with Risk Manager) |
+| `PREDICTION_API_URL` | `http://prediction-api:8000` | Prediction API base URL |
+| `RISK_MANAGER_URL` | `http://risk-manager:8004` | Risk Manager base URL |
+| `KALSHI_CONNECTOR_URL` | `http://kalshi-connector:8003` | Kalshi Connector base URL |
 
-## Future Integration Points
+## Autonomous Workflow (SPEC-017)
 
-The Queue Manager is designed for loose coupling. Future services interact with it through the REST API only — no direct database access.
+The workflow loop runs every `WORKFLOW_INTERVAL_SECONDS` inside the prediction-queue container. Each iteration:
 
-**Orchestrator** (future spec): calls `GET /queue/next` to discover what to analyze, then transitions the entry to IN_PROGRESS via a future endpoint, submits to the Prediction API, and marks it COMPLETED.
+1. **Pick** — `GET /queue/next`: highest-priority QUEUED entry → mark IN_PROGRESS.
+2. **Predict** — `POST {PREDICTION_API_URL}/predict`: market title + category → AI prediction.
+3. **Evaluate** — `POST {RISK_MANAGER_URL}/evaluate`: probability, confidence, EV, edge → approved/rejected.
+4. **Trade** — if approved and `DRY_RUN=false`: `POST {KALSHI_CONNECTOR_URL}/order`.
+5. **Persist** — write result row to `queue.workflow_results`.
+6. **Complete** — mark entry COMPLETED.
+
+### Error policy
+
+| Failure | Outcome |
+|---|---|
+| Prediction API unavailable | Entry re-queued; retried next cycle |
+| Risk Manager unavailable | Entry re-queued; retried next cycle |
+| Kalshi order fails | `trade_status=execution_failed`; entry still COMPLETED |
+| Postgres persist fails | Logged; queue state still updated |
+| Unexpected error | Entry marked FAILED (not retried) |
+
+### Trade status values
+
+| `trade_status` | Meaning |
+|---|---|
+| `rejected` | Risk Manager denied the trade |
+| `dry_run` | Approved but `DRY_RUN=true`; no order placed |
+| `executed` | Order placed successfully |
+| `execution_failed` | Approved but Kalshi API call failed |
+
+### Probability computation
+
+The prediction-api returns a prediction string (`"Yes"` / `"No"`) and a confidence (0–1). The workflow converts this to a P(Yes) probability:
+
+```
+prediction = "Yes", confidence = 0.80  →  probability = 0.80
+prediction = "No",  confidence = 0.80  →  probability = 0.20
+```
+
+Expected value and edge are computed as:
+```
+market_price = (yes_bid + yes_ask) / 2 / 100   (from kalshi-connector)
+expected_value = probability - market_price
+edge = probability - market_price
+```
+
+If the market price cannot be fetched, both default to `0.0` (the Risk Manager will reject on `edge < MIN_EDGE`).
+
+### PostgreSQL schema
+
+```sql
+CREATE TABLE IF NOT EXISTS queue.workflow_results (
+    result_id           TEXT PRIMARY KEY,
+    queue_id            TEXT NOT NULL,
+    market_id           TEXT NOT NULL,
+    ticker              TEXT NOT NULL,
+    prediction_id       TEXT,
+    prediction          TEXT,
+    confidence          DOUBLE PRECISION,
+    probability         DOUBLE PRECISION,
+    approved            BOOLEAN,
+    risk_reason         TEXT,
+    trade_status        TEXT NOT NULL,
+    dry_run             BOOLEAN NOT NULL DEFAULT true,
+    order_id            TEXT,
+    executed_at         TIMESTAMPTZ NOT NULL,
+    duration_ms         INTEGER,
+    metadata            JSONB NOT NULL DEFAULT '{}'
+);
+```
+
+The `metadata` column stores the full `prediction_data`, `risk_data`, and `order_data` dicts for post-hoc analysis.
+
+## Integration Points
 
 **Opportunity Engine** (current): calls `POST /queue/add` after each market scan to replenish the queue with freshly scored markets.
+
+**Prediction API** (SPEC-017): receives `POST /predict` from the workflow loop with a market question and category; returns an AI prediction and confidence score.
+
+**Risk Manager** (SPEC-017): receives `POST /evaluate` from the workflow loop; applies configured thresholds (MIN_CONFIDENCE, MIN_EDGE, etc.) and returns approved/rejected.
+
+**Kalshi Connector** (SPEC-017): receives `POST /order` from the workflow loop when a trade is approved and `DRY_RUN=false`; also queried for current market bid/ask to compute EV/edge.
 
 ## Implementation Notes
 
@@ -331,7 +426,7 @@ The Queue Manager is designed for loose coupling. Future services interact with 
 
 These are observations for future phases, not changes to this implementation.
 
-**1. No IN_PROGRESS transition endpoint.** SPEC-016 does not implement the QUEUED → IN_PROGRESS transition. A future spec should add `POST /queue/{market_id}/claim` or similar to let an orchestrator atomically claim the next item and prevent double-prediction.
+**1. No REST endpoint for IN_PROGRESS transition.** The workflow loop transitions entries to IN_PROGRESS internally via `queue.mark_in_progress()`. A future REST endpoint (`POST /queue/{market_id}/claim`) would allow external orchestrators to claim entries atomically.
 
 **2. In-memory state is not distributed.** Running multiple prediction-queue replicas would result in independent queues. A future phase could use Redis or postgres-backed locking for distributed coordination.
 

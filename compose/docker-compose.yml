@@ -315,10 +315,11 @@ services:
       start_period: 20s
 
   # --- Prediction Queue Manager ---
-  # Traffic controller for the prediction pipeline. Maintains a priority-ordered
-  # queue of markets awaiting prediction. Prevents duplicate entries, auto-expires
-  # stale opportunities, and exposes GET /queue/next for future orchestration.
-  # No AI, no trading. See docs/PREDICTION_QUEUE.md.
+  # Traffic controller and autonomous workflow orchestrator.  Maintains a
+  # priority-ordered queue of markets, runs the predict/evaluate/trade cycle
+  # on each scheduled tick, and records results in PostgreSQL.
+  # WORKFLOW_ENABLED=true by default; DRY_RUN=true prevents live orders.
+  # See docs/PREDICTION_QUEUE.md.
   prediction-queue:
     build: ../services/prediction-queue
     container_name: prediction-queue
@@ -340,6 +341,12 @@ services:
       QUEUE_EXPIRATION_BUFFER_SECONDS: ${QUEUE_EXPIRATION_BUFFER_SECONDS:-60}
       QUEUE_PRIORITY_WEIGHT: ${QUEUE_PRIORITY_WEIGHT:-0.70}
       QUEUE_WAIT_WEIGHT: ${QUEUE_WAIT_WEIGHT:-0.30}
+      WORKFLOW_ENABLED: ${WORKFLOW_ENABLED:-true}
+      WORKFLOW_INTERVAL_SECONDS: ${WORKFLOW_INTERVAL_SECONDS:-30}
+      DRY_RUN: ${DRY_RUN:-true}
+      PREDICTION_API_URL: "http://prediction-api:8000"
+      RISK_MANAGER_URL: "http://risk-manager:8004"
+      KALSHI_CONNECTOR_URL: "http://kalshi-connector:8003"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health')"]

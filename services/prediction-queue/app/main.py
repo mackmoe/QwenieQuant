@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager, suppress
 from typing import AsyncIterator
 
+import httpx
 from fastapi import FastAPI
 
 from app.config import get_settings
@@ -24,19 +25,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     set_dependencies(pool, settings)
 
     logger.info(
-        "Prediction Queue Manager starting: max_size=%d refresh=%ds",
+        "Prediction Queue Manager starting: max_size=%d refresh=%ds workflow=%s dry_run=%s",
         settings.queue_max_size,
         settings.queue_refresh_seconds,
+        settings.workflow_enabled,
+        settings.dry_run,
     )
 
-    task = asyncio.create_task(scheduler_module.scheduler_loop(pool, settings))
+    http_client = httpx.AsyncClient()
+    refresh_task = asyncio.create_task(scheduler_module.scheduler_loop(pool, settings))
+    workflow_task = asyncio.create_task(
+        scheduler_module.workflow_loop(pool, http_client, settings)
+    )
 
     try:
         yield
     finally:
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+        for task in (workflow_task, refresh_task):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        await http_client.aclose()
         if pool is not None:
             await pool.close()
         logger.info("Prediction Queue Manager stopped")

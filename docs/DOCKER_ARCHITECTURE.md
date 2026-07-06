@@ -18,7 +18,7 @@ how they fit together.
 | `kalshi-connector` | HTTP abstraction layer for the Kalshi prediction market API. | **Deployed** (SPEC-012), localhost-only — see [KALSHI_CONNECTOR.md](KALSHI_CONNECTOR.md) |
 | `risk-manager` | Evaluates predictions against risk rules; determines whether a trade is permitted. | **Deployed** (SPEC-013), localhost-only — see [RISK_MANAGER.md](RISK_MANAGER.md) |
 | `opportunity-engine` | Discovers active Kalshi markets and ranks them by priority tier using deterministic scoring. | **Deployed** (SPEC-015), localhost-only — see [OPPORTUNITY_ENGINE.md](OPPORTUNITY_ENGINE.md) |
-| `prediction-queue` | Traffic controller: maintains a priority-ordered queue of markets awaiting prediction. | **Deployed** (SPEC-016), localhost-only — see [PREDICTION_QUEUE.md](PREDICTION_QUEUE.md) |
+| `prediction-queue` | Traffic controller and autonomous workflow orchestrator: priority queue of markets, runs predict/evaluate/trade cycle each tick. | **Deployed** (SPEC-016/017), localhost-only — see [PREDICTION_QUEUE.md](PREDICTION_QUEUE.md) |
 
 Services are deployed one at a time, each establishing a stable baseline
 before the next is added. `ollama` was first, `searxng` second, `postgres`
@@ -111,5 +111,5 @@ and can be started once Discord credentials are set in `compose/.env`:
 - **opportunity-engine** — discovers which Kalshi markets are worth predicting
   by ranking all active markets with a deterministic score; no AI, no trades.
 - **prediction-queue** — ensures expensive reasoning is always spent on the
-  highest-value opportunities by maintaining a deterministic, priority-ordered
-  work queue; the heartbeat of the prediction pipeline.
+  highest-value opportunities; runs the autonomous predict/evaluate/trade cycle
+  on the highest-priority queued market each tick; the heartbeat and executor of the prediction pipeline.

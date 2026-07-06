@@ -75,6 +75,10 @@ def tc():
             "app.main.scheduler_module.scheduler_loop",
             new_callable=AsyncMock,
         ),
+        patch(
+            "app.main.scheduler_module.workflow_loop",
+            new_callable=AsyncMock,
+        ),
     ):
         with TestClient(app) as client:
             routes_module.set_dependencies(None, _settings())

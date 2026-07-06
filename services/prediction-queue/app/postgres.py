@@ -49,6 +49,7 @@ async def init_pool(url: str) -> asyncpg.Pool:
         await conn.execute(_CREATE_SCHEMA)
         await conn.execute(_CREATE_TABLE)
         await conn.execute(_CREATE_INDEX)
+        await conn.execute(_CREATE_WORKFLOW_TABLE)
     return pool
 
 
@@ -81,3 +82,77 @@ async def is_reachable(pool: asyncpg.Pool) -> bool:
         return True
     except Exception:
         return False
+
+
+_CREATE_WORKFLOW_TABLE = """
+CREATE TABLE IF NOT EXISTS queue.workflow_results (
+    result_id           TEXT PRIMARY KEY,
+    queue_id            TEXT NOT NULL,
+    market_id           TEXT NOT NULL,
+    ticker              TEXT NOT NULL,
+    prediction_id       TEXT,
+    prediction          TEXT,
+    confidence          DOUBLE PRECISION,
+    probability         DOUBLE PRECISION,
+    approved            BOOLEAN,
+    risk_reason         TEXT,
+    trade_status        TEXT NOT NULL,
+    dry_run             BOOLEAN NOT NULL DEFAULT true,
+    order_id            TEXT,
+    executed_at         TIMESTAMPTZ NOT NULL,
+    duration_ms         INTEGER,
+    metadata            JSONB NOT NULL DEFAULT '{}'
+);
+"""
+
+_INSERT_WORKFLOW_RESULT = """
+INSERT INTO queue.workflow_results
+    (result_id, queue_id, market_id, ticker, prediction_id, prediction,
+     confidence, probability, approved, risk_reason, trade_status, dry_run,
+     order_id, executed_at, duration_ms, metadata)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
+ON CONFLICT (result_id) DO NOTHING;
+"""
+
+
+async def persist_workflow_result(
+    pool: asyncpg.Pool,
+    *,
+    result_id: str,
+    queue_id: str,
+    market_id: str,
+    ticker: str,
+    prediction_id: str | None,
+    prediction: str | None,
+    confidence: float | None,
+    probability: float | None,
+    approved: bool | None,
+    risk_reason: str | None,
+    trade_status: str,
+    dry_run: bool,
+    order_id: str | None,
+    duration_ms: int | None,
+    metadata: dict,
+) -> None:
+    from datetime import datetime, timezone
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            _INSERT_WORKFLOW_RESULT,
+            result_id,
+            queue_id,
+            market_id,
+            ticker,
+            prediction_id,
+            prediction,
+            confidence,
+            probability,
+            approved,
+            risk_reason,
+            trade_status,
+            dry_run,
+            order_id,
+            datetime.now(timezone.utc),
+            duration_ms,
+            json.dumps(metadata),
+        )

@@ -232,3 +232,33 @@ def cancel(market_id: str) -> bool:
             entry.last_updated = now
             return True
     return False
+
+
+def _transition(market_id: str, from_states: set, to_state: QueueState) -> bool:
+    now = _now()
+    for entry in _queue:
+        if entry.market_id == market_id and entry.queue_state in from_states:
+            entry.queue_state = to_state
+            entry.last_updated = now
+            return True
+    return False
+
+
+def mark_in_progress(market_id: str) -> bool:
+    """QUEUED → IN_PROGRESS."""
+    return _transition(market_id, {QueueState.QUEUED}, QueueState.IN_PROGRESS)
+
+
+def mark_completed(market_id: str) -> bool:
+    """IN_PROGRESS → COMPLETED."""
+    return _transition(market_id, {QueueState.IN_PROGRESS}, QueueState.COMPLETED)
+
+
+def mark_failed(market_id: str) -> bool:
+    """IN_PROGRESS → FAILED."""
+    return _transition(market_id, {QueueState.IN_PROGRESS}, QueueState.FAILED)
+
+
+def mark_queued(market_id: str) -> bool:
+    """IN_PROGRESS → QUEUED (retry on next cycle)."""
+    return _transition(market_id, {QueueState.IN_PROGRESS}, QueueState.QUEUED)
