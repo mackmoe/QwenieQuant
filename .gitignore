@@ -69,3 +69,6 @@ backups/*
 !backups/.gitkeep
 memory/*
 !memory/.gitkeep
+
+# --- Private keys ---
+compose/keys/
