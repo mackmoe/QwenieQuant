@@ -23,6 +23,9 @@ infrastructure â€” an LLM runtime (Ollama), a database, and self-hosted search â
 deployed incrementally, one service at a time. See
 [docs/DOCKER_ARCHITECTURE.md](docs/DOCKER_ARCHITECTURE.md) for current status.
 
+For Kalshi market/order/settlement vocabulary used throughout this project, see
+[docs/KALSHI_TERMINOLOGY.md](docs/KALSHI_TERMINOLOGY.md).
+
 ## Repository Layout
 
 ```

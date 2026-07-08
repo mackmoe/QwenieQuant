@@ -348,3 +348,86 @@ class TestCancelEntry:
         tc.delete("/queue/M1")
         resp = tc.delete("/queue/M1")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Tests: POST /run
+# ---------------------------------------------------------------------------
+
+
+class TestRunWorkflow:
+    def test_run_empty_queue_returns_empty_status(self, tc):
+        from app import routes as routes_module
+        from unittest.mock import AsyncMock, patch, MagicMock
+        mock_http = MagicMock()
+        routes_module.set_dependencies(None, _settings(), mock_http)
+
+        with patch(
+            "app.routes.workflow_module.run_manual",
+            new_callable=AsyncMock,
+            return_value={"status": "empty"},
+        ):
+            resp = tc.post("/run")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "empty"
+
+    def test_run_completed_returns_full_result(self, tc):
+        from app import routes as routes_module
+        from unittest.mock import AsyncMock, patch, MagicMock
+        mock_http = MagicMock()
+        routes_module.set_dependencies(None, _settings(), mock_http)
+
+        payload = {
+            "status": "completed",
+            "market_id": "MKT-1",
+            "ticker": "MKT-1",
+            "title": "Will X happen?",
+            "prediction": "Yes",
+            "confidence": 0.80,
+            "risk_approved": False,
+            "risk_reason": "low ev",
+            "trade_status": "rejected",
+            "duration_ms": 1200,
+            "dry_run": True,
+        }
+        with patch(
+            "app.routes.workflow_module.run_manual",
+            new_callable=AsyncMock,
+            return_value=payload,
+        ):
+            resp = tc.post("/run")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "completed"
+        assert data["market_id"] == "MKT-1"
+        assert data["prediction"] == "Yes"
+
+    def test_run_busy_returns_busy_status(self, tc):
+        from app import routes as routes_module
+        from unittest.mock import AsyncMock, patch, MagicMock
+        mock_http = MagicMock()
+        routes_module.set_dependencies(None, _settings(), mock_http)
+
+        with patch(
+            "app.routes.workflow_module.run_manual",
+            new_callable=AsyncMock,
+            return_value={"status": "busy", "started_at": None, "elapsed_seconds": None},
+        ):
+            resp = tc.post("/run")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "busy"
+
+    def test_run_without_http_returns_503(self, tc):
+        from app import routes as routes_module
+        routes_module.set_dependencies(None, _settings(), None)
+        resp = tc.post("/run")
+        assert resp.status_code == 503
+
+    def test_run_without_settings_returns_503(self, tc):
+        from app import routes as routes_module
+        routes_module.set_dependencies(None, None, None)
+        try:
+            resp = tc.post("/run")
+            assert resp.status_code == 503
+        finally:
+            routes_module.set_dependencies(None, _settings())

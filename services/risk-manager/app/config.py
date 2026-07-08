@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     min_edge: float = 0.05
     max_position_percent: float = 5.0   # percent of account balance per trade
     max_open_positions: int = 10
-    max_daily_loss: int = 10_000        # cents ($100.00)
+    max_daily_loss: int = 1_000         # cents ($10.00)
     max_consecutive_losses: int = 5
 
     # Safe default: never approve a trade unless explicitly enabled

@@ -94,7 +94,7 @@ async def workflow_loop(pool, http, settings: Settings) -> None:
     while True:
         if settings.workflow_enabled:
             try:
-                await workflow_module.run_iteration(pool, http, settings)
+                await workflow_module.run_exclusive(pool, http, settings)
             except Exception:
                 logger.exception("Workflow iteration error")
         await asyncio.sleep(settings.workflow_interval_seconds)

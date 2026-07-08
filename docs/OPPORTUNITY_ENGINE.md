@@ -2,7 +2,7 @@
 
 **Port:** 8005  
 **Container:** `opportunity-engine`  
-**Spec:** SPEC-015
+**Spec:** SPEC-015, SPEC-020
 
 ## Overview
 
@@ -26,20 +26,26 @@ Kalshi Connector (http://kalshi-connector:8003)
         │
         ├── scheduler state (in-memory list[ScoredMarket])
         │
-        └── postgres (opportunity.market_scores)
+        ├── postgres (opportunity.market_scores)
+        │               ↑
+        │      upserted on each scan
+        │
+        └── Prediction Queue (http://prediction-queue:8006)
                         ↑
-               upserted on each scan
+               Tier 3 markets published via POST /queue/add
+               after each successful scan (SPEC-020)
 ```
 
 ### Components
 
 | Module | Responsibility |
 |---|---|
-| `app/config.py` | Settings with tier caps, scoring weights, infra URLs |
+| `app/config.py` | Settings with tier caps, scoring weights, infra URLs, publish config |
 | `app/models.py` | `ScoredMarket`, `OpportunitiesResponse`, `RefreshResponse`, `HealthStatus` |
 | `app/kalshi_client.py` | Thin HTTP wrapper around kalshi-connector `/markets` |
 | `app/scorer.py` | Deterministic scoring: `score_market`, `assign_tiers`, `run_scoring` |
 | `app/postgres.py` | Pool init, `upsert_scores` (ON CONFLICT DO UPDATE), `is_reachable` |
+| `app/queue_publisher.py` | `publish_opportunities` — POSTs Tier 3 markets to Prediction Queue |
 | `app/scheduler.py` | Background loop + `run_scan`; module-level state cache |
 | `app/health.py` | Aggregates postgres + kalshi-connector + scheduler state |
 | `app/routes.py` | FastAPI routes; `set_dependencies()` for testing |
@@ -221,13 +227,69 @@ Scores are upserted on every scan (`ON CONFLICT (market_id) DO UPDATE`). The tab
 | `LIQUIDITY_NORMALIZATION` | `5000.0` | Open interest reference |
 | `SPREAD_NORMALIZATION` | `30.0` | Maximum spread before score reaches 0 |
 | `HTTP_TIMEOUT` | `30.0` | Outbound HTTP timeout (seconds) |
+| `PREDICTION_QUEUE_URL` | `http://prediction-queue:8006` | Prediction Queue base URL |
+| `PUBLISH_TO_QUEUE` | `true` | Set to `false` to disable publishing entirely |
+| `QUEUE_PUBLISH_BATCH_SIZE` | `30` | Max Tier 3 markets published per scan cycle |
+
+## Queue Publishing (SPEC-020)
+
+After every successful scoring pass, the Opportunity Engine publishes Tier 3 markets to the Prediction Queue.
+
+### Publish timing
+
+Publishing occurs immediately after scoring completes, within the same `run_scan` call. Both the `POST /refresh` route and the background scheduler trigger publishing.
+
+### What is published
+
+Only **Tier 3** markets (the top `MAX_TIER3_MARKETS` by priority score) are published. Tier 1 and Tier 2 markets are never sent to the queue.
+
+### Payload per opportunity
+
+```json
+{
+  "market_id": "KXBTC-24DEC25-T120000",
+  "ticker": "KXBTC-24DEC25-T120000",
+  "priority_score": 87.3,
+  "metadata": {
+    "title": "Will BTC close above $120,000 today?",
+    "assigned_tier": 3,
+    "days_remaining": 0.18,
+    "time_score": 0.5
+  }
+}
+```
+
+### Duplicate handling
+
+The Opportunity Engine submits all eligible Tier 3 markets on every cycle without duplicate checking. The Prediction Queue owns deduplication — existing QUEUED entries are updated in place (`added=0, updated=N`).
+
+### Failure recovery
+
+If the Prediction Queue is unreachable, the failure is logged and swallowed. The scan result is retained, the in-memory state is updated, and postgres is upserted normally. The next scheduled scan will retry publishing automatically.
+
+Log on success:
+
+```text
+Successfully published 30 opportunities (added=12 updated=18)
+```
+
+Log on failure:
+
+```text
+Prediction Queue unavailable: ... — continuing normally
+```
+
+### Disabling
+
+Set `PUBLISH_TO_QUEUE=false` in `.env` to disable publishing without affecting market discovery.
 
 ## Scheduler Behaviour
 
 - The background loop starts with an initial sleep of `DISCOVERY_INTERVAL_SECONDS` so it does not compete with service startup and healthcheck.
-- `POST /refresh` bypasses the schedule and runs a scan immediately.
+- `POST /refresh` bypasses the schedule and runs a scan immediately (and also triggers publishing).
 - If kalshi-connector is unreachable, `get_markets()` returns an empty list; the scan succeeds with zero markets and updates the in-memory state accordingly.
 - If postgres is unreachable, `upsert_scores` is skipped silently; the in-memory cache is still updated.
+- If the Prediction Queue is unreachable, publishing is skipped silently; the scan and postgres upsert proceed normally.
 
 ## Implementation Notes
 

@@ -139,16 +139,16 @@ Returns the current order book for a market.
 {
     "ticker": "AAPL-24-GT150",
     "yes": [
-        {"price": 55, "quantity": 100},
-        {"price": 54, "quantity": 200}
+        {"price": 55, "count": 100},
+        {"price": 54, "count": 200}
     ],
     "no": [
-        {"price": 43, "quantity": 150}
+        {"price": 43, "count": 150}
     ]
 }
 ```
 
-Each level is `{price: int, quantity: int}`. Prices in cents.
+Each level is `{price: int, count: int}`. Prices in cents.
 
 ---
 
@@ -161,7 +161,7 @@ Returns all open positions in the portfolio.
     {
         "ticker": "AAPL-24-GT150",
         "side": "yes",
-        "quantity": 10,
+        "count": 10,
         "realized_pnl": 500,
         "unrealized_pnl": 200,
         "market_exposure": 550
@@ -170,7 +170,7 @@ Returns all open positions in the portfolio.
 ```
 
 Kalshi's signed position integer (positive = YES, negative = NO) is
-normalized to `side` + `quantity` (always positive). All PNL values in cents.
+normalized to `side` + `count` (always positive). All PNL values in cents.
 
 ---
 
@@ -184,7 +184,7 @@ Request:
     "ticker": "AAPL-24-GT150",
     "side": "yes",
     "action": "buy",
-    "quantity": 10,
+    "count": 10,
     "price": 55,
     "order_type": "limit"
 }
@@ -202,7 +202,7 @@ Response:
     "ticker": "AAPL-24-GT150",
     "side": "yes",
     "action": "buy",
-    "quantity": 10,
+    "count": 10,
     "price": 55,
     "order_type": "limit",
     "status": "resting",

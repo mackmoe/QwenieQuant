@@ -134,6 +134,70 @@ def detect_data_volume_pattern(summaries: list[dict]) -> Optional[str]:
     return None
 
 
+def detect_calibration_gap(summaries: list[dict]) -> Optional[str]:
+    """
+    Detect poor confidence calibration: high-confidence predictions don't
+    meaningfully outperform low-confidence ones.
+    """
+    recent = next(
+        (s for s in summaries
+         if isinstance(s.get("diagnostics"), dict)
+         and s["diagnostics"].get("confidence_buckets")),
+        None,
+    )
+    if not recent:
+        return None
+
+    buckets = recent["diagnostics"]["confidence_buckets"]
+    low = next((b for b in buckets if b.get("label") == "50-60%"), None)
+    high = next(
+        (b for b in buckets if b.get("label") in ("80-90%", "90-100%")),
+        None,
+    )
+    if not low or not high:
+        return None
+    if low.get("accuracy") is None or high.get("accuracy") is None:
+        return None
+    if low.get("resolved", 0) < 3 or high.get("resolved", 0) < 3:
+        return None
+
+    gap = high["accuracy"] - low["accuracy"]
+    if gap < 0.05:
+        return (
+            f"Confidence calibration gap is narrow ({gap * 100:.0f}pp between "
+            f"50-60% and {high['label']} buckets) — high-confidence predictions "
+            "don't significantly outperform low-confidence ones."
+        )
+    return None
+
+
+def detect_search_impact(summaries: list[dict]) -> Optional[str]:
+    """Report the measured accuracy impact of SearXNG search usage."""
+    recent = next(
+        (s for s in summaries
+         if isinstance(s.get("diagnostics"), dict)
+         and s["diagnostics"].get("search_effectiveness")),
+        None,
+    )
+    if not recent:
+        return None
+
+    se = recent["diagnostics"]["search_effectiveness"]
+    delta = se.get("accuracy_delta")
+    if delta is None:
+        return None
+    if se.get("with_search_count", 0) < 3 or se.get("without_search_count", 0) < 3:
+        return None
+
+    with_pct = (se.get("with_search_accuracy") or 0) * 100
+    without_pct = (se.get("without_search_accuracy") or 0) * 100
+    direction = "improves" if delta > 0 else "reduces"
+    return (
+        f"SearXNG {direction} accuracy by {abs(delta) * 100:.0f}pp"
+        f" ({with_pct:.0f}% with search vs {without_pct:.0f}% without)."
+    )
+
+
 def detect_all(summaries: list[dict]) -> list[str]:
     detectors = [
         detect_accuracy_trend,
@@ -141,5 +205,7 @@ def detect_all(summaries: list[dict]) -> list[str]:
         detect_category_dominance,
         detect_model_consistency,
         detect_data_volume_pattern,
+        detect_calibration_gap,
+        detect_search_impact,
     ]
     return [result for d in detectors if (result := d(summaries)) is not None]

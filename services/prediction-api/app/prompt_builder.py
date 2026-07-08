@@ -39,7 +39,7 @@ def build_prediction_prompt(
     """Return (system_prompt, user_prompt) for a prediction request."""
     parts = [
         f"Question: {request.question}",
-        f"Category: {request.category.value}",
+        f"Category: {request.category}",
         f"Options: {', '.join(request.options)}",
     ]
 

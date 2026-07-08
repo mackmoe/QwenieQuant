@@ -1,5 +1,4 @@
 from datetime import date, datetime, timezone
-from enum import Enum
 from typing import Optional
 import uuid
 
@@ -12,16 +11,19 @@ def _make_prediction_id() -> str:
     return f"pred_{ts}_{suffix}"
 
 
-class PredictionCategory(str, Enum):
-    weather = "weather"
-    sports = "sports"
-    politics = "politics"
-    finance = "finance"
+# Kalshi's category taxonomy (hierarchy: Category → Series → Event → Market).
+# Stored as a free string because Kalshi adds categories without notice
+# (e.g. "Exotics" appears in the API but not on their browse pages).
+KALSHI_CATEGORIES = frozenset({
+    "Elections", "Politics", "Sports", "Culture", "Crypto", "Commodities",
+    "Climate", "Economics", "Mentions", "Financials", "Finance",
+    "Tech & Science", "Exotics",
+})
 
 
 class PredictionRequest(BaseModel):
     question: str = Field(..., min_length=10, max_length=500)
-    category: PredictionCategory
+    category: str = Field(..., min_length=1, max_length=50)
     options: list[str] = Field(default=["Yes", "No"], min_length=2, max_length=10)
     context: dict = Field(default_factory=dict)
     resolution_date: Optional[date] = None
@@ -32,7 +34,7 @@ class PredictionRequest(BaseModel):
             "examples": [
                 {
                     "question": "Will the S&P 500 close above 5000 by end of Q1 2025?",
-                    "category": "finance",
+                    "category": "Finance",
                     "options": ["Yes", "No"],
                     "context": {"current_value": 4900},
                     "resolution_date": "2025-03-31",

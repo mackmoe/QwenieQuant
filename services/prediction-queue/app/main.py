@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     pool = await postgres_module.init_pool(settings.postgres_url)
-    set_dependencies(pool, settings)
+    http_client = httpx.AsyncClient()
+    set_dependencies(pool, settings, http_client)
 
     logger.info(
         "Prediction Queue Manager starting: max_size=%d refresh=%ds workflow=%s dry_run=%s",
@@ -32,7 +33,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.dry_run,
     )
 
-    http_client = httpx.AsyncClient()
     refresh_task = asyncio.create_task(scheduler_module.scheduler_loop(pool, settings))
     workflow_task = asyncio.create_task(
         scheduler_module.workflow_loop(pool, http_client, settings)

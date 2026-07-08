@@ -81,3 +81,20 @@ class HealthStatus(BaseModel):
     active_entries: int
     last_refresh: datetime | None
     version: str
+
+
+class RunResponse(BaseModel):
+    status: str  # "busy" | "empty" | "completed" | "requeued" | "failed" | "skipped"
+    reason: str | None = None
+    market_id: str | None = None
+    ticker: str | None = None
+    title: str | None = None
+    prediction: str | None = None
+    confidence: float | None = None
+    risk_approved: bool | None = None
+    risk_reason: str | None = None
+    trade_status: str | None = None
+    duration_ms: int | None = None
+    dry_run: bool = True
+    started_at: str | None = None
+    elapsed_seconds: int | None = None

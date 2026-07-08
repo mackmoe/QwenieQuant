@@ -10,7 +10,7 @@ class PlaceOrderRequest(BaseModel):
     ticker: str
     side: str    # "yes" or "no"
     action: str  # "buy" or "sell"
-    quantity: int
+    count: int
     price: int   # in cents (1–99)
     order_type: str = "limit"
 
@@ -38,7 +38,7 @@ class Order(BaseModel):
     ticker: str
     side: str
     action: str
-    quantity: int
+    count: int
     price: int  # in cents
     order_type: str
     status: str
@@ -64,7 +64,7 @@ def _normalize_order(raw: dict) -> Order:
         ticker=order.get("ticker", ""),
         side=side,
         action=order.get("action", "buy"),
-        quantity=order.get("count", 0),
+        count=order.get("count", 0),
         price=price,
         order_type=order.get("type", "limit"),
         status=order.get("status", "unknown"),
@@ -81,7 +81,7 @@ async def place_order(client: KalshiClient, request: PlaceOrderRequest) -> Order
         "action": request.action,
         "type": request.order_type,
         "side": request.side,
-        "count": request.quantity,
+        "count": request.count,
         price_key: request.price,
     }
     data = await client.post("/portfolio/orders", json=payload)

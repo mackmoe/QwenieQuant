@@ -149,6 +149,9 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL}
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL}
       POSTGRES_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      CONFIDENCE_CALIBRATION_ENABLED: ${CONFIDENCE_CALIBRATION_ENABLED:-true}
+      CONFIDENCE_MIN_HISTORY: ${CONFIDENCE_MIN_HISTORY:-25}
+      CONFIDENCE_MAX_REDUCTION: ${CONFIDENCE_MAX_REDUCTION:-0.30}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -235,8 +238,14 @@ services:
       PREDICTION_API_URL: "http://prediction-api:8000"
       LEARNING_ENGINE_URL: "http://learning-engine:8001"
       REFLECTION_ENGINE_URL: "http://reflection-engine:8002"
+      OPPORTUNITY_ENGINE_URL: "http://opportunity-engine:8005"
+      PREDICTION_QUEUE_URL: "http://prediction-queue:8006"
+      RISK_MANAGER_URL: "http://risk-manager:8004"
       OLLAMA_URL: "http://ollama:11434"
       SEARXNG_URL: "http://searxng:8080"
+      CONFIDENCE_CALIBRATION_ENABLED: ${CONFIDENCE_CALIBRATION_ENABLED:-true}
+      DISCORD_NOTIFICATIONS_ENABLED: ${DISCORD_NOTIFICATIONS_ENABLED:-true}
+      DISCORD_NOTIFICATION_CHANNEL_ID: ${DISCORD_NOTIFICATION_CHANNEL_ID:-}
     restart: unless-stopped
     healthcheck:
       # The bot writes /tmp/bot_ready when on_ready fires successfully.
@@ -389,6 +398,9 @@ services:
       MAX_TIER2_MARKETS: ${MAX_TIER2_MARKETS:-100}
       MAX_TIER3_MARKETS: ${MAX_TIER3_MARKETS:-30}
       MIN_PRIORITY_SCORE: ${MIN_PRIORITY_SCORE:-5.0}
+      PREDICTION_QUEUE_URL: "http://prediction-queue:8006"
+      PUBLISH_TO_QUEUE: ${PUBLISH_TO_QUEUE:-true}
+      QUEUE_PUBLISH_BATCH_SIZE: ${QUEUE_PUBLISH_BATCH_SIZE:-30}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health')"]

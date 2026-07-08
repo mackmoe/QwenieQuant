@@ -61,7 +61,7 @@ async def test_get_account_calls_account_endpoint():
 
 
 async def test_get_positions_success():
-    positions = [{"ticker": "T", "side": "yes", "quantity": 5}]
+    positions = [{"ticker": "T", "side": "yes", "count": 5}]
     http = MagicMock()
     http.get = AsyncMock(return_value=_mock_response(200, positions))
     result = await _client(http).get_positions()

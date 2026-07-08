@@ -10,7 +10,7 @@ class EvaluationRequest(BaseModel):
     expected_value: float
     edge: float
     market_ticker: str
-    market_category: str = "finance"
+    market_category: str = "Financials"
 
     @field_validator("probability", "confidence")
     @classmethod

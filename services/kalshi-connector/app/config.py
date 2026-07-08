@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     @property
     def base_url(self) -> str:
         if self.kalshi_environment == "production":
-            return "https://trading-api.kalshi.com/trade-api/v2"
+            return "https://api.elections.kalshi.com/trade-api/v2"
         return "https://demo-api.kalshi.co/trade-api/v2"
 
     def load_private_key_pem(self) -> str:

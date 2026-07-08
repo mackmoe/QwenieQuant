@@ -348,3 +348,69 @@ def test_run_scoring_ranking_order():
     result = run_scoring(markets, _settings())
     assert result[0].ticker == "HIGH"
     assert result[1].ticker == "LOW"
+
+
+def test_score_market_accepts_open_status():
+    # Kalshi renamed market status from "active" to "open" in their API.
+    # Both values must produce a non-zero score so markets are not silently
+    # filtered out after the migration.
+    market_open = _market(status="open")
+    s = _settings()
+    score, _ = score_market(market_open, _now(), s)
+    assert score > 0.0
+
+
+def test_score_market_rejects_unknown_status():
+    market_unknown = _market(status="settled")
+    s = _settings()
+    score, factors = score_market(market_unknown, _now(), s)
+    assert score == 0.0
+    assert factors.get("status") == "inactive"
+
+
+# ---------------------------------------------------------------------------
+# score_all — Kalshi category/event/series join (Category → Series → Event → Market)
+# ---------------------------------------------------------------------------
+
+
+def test_score_all_attaches_category_from_events():
+    markets = [{**_market(ticker="T1"), "event_ticker": "EV1"}]
+    events = {"EV1": {"event_ticker": "EV1", "series_ticker": "KXMLB", "category": "Sports"}}
+    result = score_all(markets, _now(), _settings(), events_by_ticker=events)
+    assert result[0].metadata["category"] == "Sports"
+    assert result[0].metadata["series_ticker"] == "KXMLB"
+    assert result[0].metadata["event_ticker"] == "EV1"
+
+
+def test_score_all_no_category_when_event_unknown():
+    markets = [{**_market(ticker="T1"), "event_ticker": "MISSING"}]
+    result = score_all(markets, _now(), _settings(), events_by_ticker={})
+    assert "category" not in result[0].metadata
+    assert result[0].metadata["event_ticker"] == "MISSING"
+
+
+def test_score_all_no_event_fields_when_market_lacks_event_ticker():
+    markets = [_market(ticker="T1")]
+    result = score_all(markets, _now(), _settings(), events_by_ticker={})
+    assert "event_ticker" not in result[0].metadata
+    assert "category" not in result[0].metadata
+
+
+def test_score_all_backward_compatible_without_events_arg():
+    markets = [{**_market(ticker="T1"), "event_ticker": "EV1"}]
+    result = score_all(markets, _now(), _settings())
+    assert result[0].metadata["event_ticker"] == "EV1"
+    assert "category" not in result[0].metadata
+
+
+def test_mve_market_excluded_from_scoring():
+    m = {**_market(), "mve_collection_ticker": "KXMVECROSSCATEGORY"}
+    score, factors = score_market(m, _now(), _settings())
+    assert score == 0.0
+    assert factors["status"] == "mve_excluded"
+
+
+def test_non_mve_market_scores_normally():
+    m = {**_market(), "mve_collection_ticker": None}
+    score, _ = score_market(m, _now(), _settings())
+    assert score > 0.0

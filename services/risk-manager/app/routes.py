@@ -1,7 +1,7 @@
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import asyncpg
@@ -39,7 +39,7 @@ def set_dependencies(
 
 
 def _make_decision_id() -> str:
-    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     suffix = uuid.uuid4().hex[:8]
     return f"decision_{ts}_{suffix}"
 

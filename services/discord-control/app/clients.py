@@ -72,6 +72,37 @@ class ReflectionClient(ServiceClient):
         return await self._post("/reflect", {"analysis_id": analysis_id})
 
 
+class OpportunityClient(ServiceClient):
+    async def health(self) -> dict:
+        return await self._get("/health")
+
+    async def get_opportunities(self, limit: int = 10) -> dict:
+        return await self._get(f"/opportunities?limit={limit}")
+
+    async def refresh(self) -> dict:
+        return await self._post("/refresh", {})
+
+
+class PredictionQueueClient(ServiceClient):
+    async def health(self) -> dict:
+        return await self._get("/health")
+
+    async def get_stats(self) -> dict:
+        """Return queue stats (by_state counts). Requests limit=1 to avoid large payloads."""
+        return await self._get("/queue?limit=1")
+
+    async def get_recent_completed(self, limit: int = 25) -> dict:
+        return await self._get(f"/queue?state=COMPLETED&limit={limit}")
+
+    async def run_workflow(self) -> dict:
+        return await self._post("/run", {}, timeout=360.0)
+
+
+class RiskManagerClient(ServiceClient):
+    async def health(self) -> dict:
+        return await self._get("/health")
+
+
 async def check_reachable(http: httpx.AsyncClient, url: str) -> bool:
     """Ping a URL and return True when any non-5xx response is received."""
     try:

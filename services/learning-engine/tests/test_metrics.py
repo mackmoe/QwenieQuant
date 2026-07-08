@@ -72,6 +72,24 @@ def test_accuracy_only_resolved_count():
     assert compute_accuracy(preds) == 1.0
 
 
+def test_accuracy_case_insensitive_kalshi_lowercase():
+    # Kalshi returns "yes"/"no" (lowercase); prediction-api stores "Yes"/"No".
+    # A correct prediction must not be counted as wrong due to case mismatch.
+    preds = [
+        _p(prediction="Yes", outcome="yes"),
+        _p(prediction="No", outcome="no"),
+    ]
+    assert compute_accuracy(preds) == 1.0
+
+
+def test_accuracy_case_insensitive_incorrect_still_wrong():
+    preds = [
+        _p(prediction="Yes", outcome="no"),
+        _p(prediction="No", outcome="yes"),
+    ]
+    assert compute_accuracy(preds) == 0.0
+
+
 # --- confidence ---
 
 

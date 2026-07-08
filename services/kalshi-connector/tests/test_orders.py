@@ -34,23 +34,23 @@ def _raw_order(**overrides) -> dict:
 
 
 def test_place_order_request_valid():
-    r = PlaceOrderRequest(ticker="T", side="yes", action="buy", quantity=5, price=55)
+    r = PlaceOrderRequest(ticker="T", side="yes", action="buy", count=5, price=55)
     assert r.side == "yes"
     assert r.action == "buy"
 
 
 def test_place_order_request_invalid_side():
     with pytest.raises(Exception):
-        PlaceOrderRequest(ticker="T", side="both", action="buy", quantity=5, price=55)
+        PlaceOrderRequest(ticker="T", side="both", action="buy", count=5, price=55)
 
 
 def test_place_order_request_invalid_action():
     with pytest.raises(Exception):
-        PlaceOrderRequest(ticker="T", side="yes", action="hold", quantity=5, price=55)
+        PlaceOrderRequest(ticker="T", side="yes", action="hold", count=5, price=55)
 
 
 def test_place_order_request_no_side_defaults():
-    r = PlaceOrderRequest(ticker="T", side="no", action="sell", quantity=1, price=45)
+    r = PlaceOrderRequest(ticker="T", side="no", action="sell", count=1, price=45)
     assert r.side == "no"
     assert r.order_type == "limit"
 
@@ -85,7 +85,7 @@ def test_normalize_order_no_side_uses_no_price():
 
 def test_normalize_order_quantity_from_count():
     o = _normalize_order(_raw_order(count=7))
-    assert o.quantity == 7
+    assert o.count == 7
 
 
 def test_normalize_order_status():
@@ -116,7 +116,7 @@ def test_normalize_order_filled_and_remaining():
 async def test_place_order_posts_to_correct_path():
     client = MagicMock()
     client.post = AsyncMock(return_value={"order": _raw_order()})
-    request = PlaceOrderRequest(ticker="AAPL", side="yes", action="buy", quantity=10, price=55)
+    request = PlaceOrderRequest(ticker="AAPL", side="yes", action="buy", count=10, price=55)
     result = await place_order(client, request)
     client.post.assert_called_once()
     call_path = client.post.call_args[0][0]
@@ -127,7 +127,7 @@ async def test_place_order_posts_to_correct_path():
 async def test_place_order_yes_uses_yes_price_key():
     client = MagicMock()
     client.post = AsyncMock(return_value={"order": _raw_order()})
-    request = PlaceOrderRequest(ticker="T", side="yes", action="buy", quantity=5, price=60)
+    request = PlaceOrderRequest(ticker="T", side="yes", action="buy", count=5, price=60)
     await place_order(client, request)
     payload = client.post.call_args[1]["json"]
     assert "yes_price" in payload
@@ -138,7 +138,7 @@ async def test_place_order_yes_uses_yes_price_key():
 async def test_place_order_no_uses_no_price_key():
     client = MagicMock()
     client.post = AsyncMock(return_value={"order": _raw_order(side="no", no_price=45)})
-    request = PlaceOrderRequest(ticker="T", side="no", action="buy", quantity=5, price=45)
+    request = PlaceOrderRequest(ticker="T", side="no", action="buy", count=5, price=45)
     await place_order(client, request)
     payload = client.post.call_args[1]["json"]
     assert "no_price" in payload
@@ -148,7 +148,7 @@ async def test_place_order_no_uses_no_price_key():
 async def test_place_order_includes_all_required_fields():
     client = MagicMock()
     client.post = AsyncMock(return_value={"order": _raw_order()})
-    request = PlaceOrderRequest(ticker="T", side="yes", action="sell", quantity=3, price=70)
+    request = PlaceOrderRequest(ticker="T", side="yes", action="sell", count=3, price=70)
     await place_order(client, request)
     payload = client.post.call_args[1]["json"]
     assert payload["ticker"] == "T"

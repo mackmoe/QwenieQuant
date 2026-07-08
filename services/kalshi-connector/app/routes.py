@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from app.client import KalshiClient, KalshiError
+from app.events import Event, get_event, get_events
 from app.health import HealthStatus, get_health
 from app.markets import get_market, get_markets, get_orderbook
 from app.orders import CancelOrderRequest, Order, PlaceOrderRequest, cancel_order, place_order
@@ -52,9 +53,10 @@ async def account() -> Account:
 
 @router.get("/markets")
 async def markets(
-    limit: int = Query(default=100, ge=1, le=1000),
+    limit: int = Query(default=100, ge=1, le=20000),
     status: str = Query(default="active"),
     series_ticker: Optional[str] = Query(default=None),
+    mve_filter: str = Query(default="exclude"),
 ) -> list:
     try:
         return await get_markets(
@@ -62,7 +64,26 @@ async def markets(
             limit=limit,
             status=status,
             series_ticker=series_ticker,
+            mve_filter=mve_filter,
         )
+    except KalshiError as exc:
+        raise _kalshi_exc(exc)
+
+
+@router.get("/events", response_model=list[Event])
+async def events(
+    status: str = Query(default="open"),
+) -> list[Event]:
+    try:
+        return await get_events(_require_client(), status=status)
+    except KalshiError as exc:
+        raise _kalshi_exc(exc)
+
+
+@router.get("/event/{event_ticker}", response_model=Event)
+async def event(event_ticker: str) -> Event:
+    try:
+        return await get_event(_require_client(), event_ticker)
     except KalshiError as exc:
         raise _kalshi_exc(exc)
 

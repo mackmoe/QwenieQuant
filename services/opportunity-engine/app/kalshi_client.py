@@ -38,6 +38,27 @@ class KalshiConnectorClient:
             logger.warning("kalshi-connector unavailable: %s", exc)
             return []
 
+    async def get_events(self) -> list[dict]:
+        """
+        Fetch open events from the kalshi-connector.  Events carry the
+        Kalshi category and series_ticker for their markets.
+        Returns [] on any failure so callers degrade gracefully.
+        """
+        try:
+            resp = await self._http.get(
+                f"{self._base}/events",
+                params={"status": "open"},
+                timeout=60.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            events = data if isinstance(data, list) else []
+            logger.info("Fetched %d events from kalshi-connector", len(events))
+            return events
+        except Exception as exc:
+            logger.warning("kalshi-connector events unavailable: %s", exc)
+            return []
+
     async def is_reachable(self) -> bool:
         try:
             resp = await self._http.get(f"{self._base}/health")

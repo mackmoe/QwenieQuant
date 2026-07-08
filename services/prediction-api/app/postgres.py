@@ -99,10 +99,23 @@ async def fetch_historical_context(question: str) -> list:
     return []
 
 
+def _build_response_payload(response: PredictionResponse, calibration_result) -> dict:
+    payload = response.model_dump(mode="json")
+    if calibration_result is not None and calibration_result.adjusted:
+        payload["calibration"] = {
+            "original_confidence": calibration_result.original_confidence,
+            "calibrated_confidence": calibration_result.calibrated_confidence,
+            "reason": calibration_result.reason,
+        }
+    return payload
+
+
 async def persist_prediction(
     request: PredictionRequest,
     response: PredictionResponse,
     execution_ms: int,
+    *,
+    calibration_result=None,
 ) -> None:
     if _pool is None:
         return
@@ -118,7 +131,7 @@ async def persist_prediction(
                 """,
                 response.prediction_id,
                 request.question,
-                request.category.value,
+                request.category,
                 request.options,
                 request.context or {},
                 request.resolution_date,
@@ -143,8 +156,33 @@ async def persist_prediction(
                 response.search_context_used,
                 False,
                 "valid",
-                response.model_dump(mode="json"),
+                _build_response_payload(response, calibration_result),
             )
+
+
+async def fetch_resolved_predictions(limit: int = 500) -> list[dict]:
+    """Return resolved predictions (those with an outcome row) for calibration."""
+    if _pool is None:
+        return []
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                req.category,
+                req.created_at,
+                res.prediction,
+                res.confidence,
+                res.model,
+                out.outcome
+            FROM prediction.prediction_outcomes out
+            JOIN prediction.prediction_requests req USING (prediction_id)
+            JOIN prediction.prediction_responses res USING (prediction_id)
+            ORDER BY req.created_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+    return [dict(row) for row in rows]
 
 
 async def fetch_recent_predictions(limit: int = 10) -> list[dict]:

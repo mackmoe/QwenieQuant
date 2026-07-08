@@ -90,7 +90,7 @@ def _order(**kwargs) -> dict:
         ticker="MKT-1",
         side="yes",
         action="buy",
-        quantity=5,
+        count=5,
         price=50,
         order_type="limit",
         status="resting",
@@ -355,3 +355,434 @@ class TestRunIteration:
 
         side_arg = mock_execute.call_args.args[3]
         assert side_arg == "no"
+
+    async def test_no_trade_ev_computed_from_no_perspective(self):
+        # When model predicts "No" (confidence=0.80 → probability=0.20),
+        # EV must be market_price - probability (NO perspective), not the
+        # inverted YES-perspective value which would deny valid NO opportunities.
+        # market_price=0.60 → YES EV = 0.20-0.60 = -0.40 (would wrongly deny)
+        #                    → NO  EV = 0.60-0.20 = +0.40 (correct: approve)
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+
+        mock_rm = AsyncMock(return_value=_risk(approved=False))
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
+                  return_value=_pred(prediction="No", confidence=0.80)),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.60),
+            patch("app.workflow._call_risk_manager", mock_rm),
+        ):
+            await wf.run_iteration(None, MagicMock(), s)
+
+        call_kwargs = mock_rm.call_args
+        # probability passed = P(No) = 1 - 0.20 = 0.80
+        probability_arg = call_kwargs.args[3]
+        assert probability_arg == pytest.approx(0.80)
+        # ev passed = market_price - P(Yes) = 0.60 - 0.20 = 0.40 (positive)
+        ev_arg = call_kwargs.args[5]
+        assert ev_arg == pytest.approx(0.40)
+
+    async def test_yes_trade_ev_computed_from_yes_perspective(self):
+        # When model predicts "Yes" (confidence=0.80 → probability=0.80),
+        # EV must be probability - market_price.
+        # market_price=0.60 → YES EV = 0.80 - 0.60 = +0.20 (positive, approve)
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+
+        mock_rm = AsyncMock(return_value=_risk(approved=False))
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
+                  return_value=_pred(prediction="Yes", confidence=0.80)),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.60),
+            patch("app.workflow._call_risk_manager", mock_rm),
+        ):
+            await wf.run_iteration(None, MagicMock(), s)
+
+        call_kwargs = mock_rm.call_args
+        probability_arg = call_kwargs.args[3]
+        assert probability_arg == pytest.approx(0.80)
+        ev_arg = call_kwargs.args[5]
+        assert ev_arg == pytest.approx(0.20)
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_iteration return values
+# ---------------------------------------------------------------------------
+
+
+class TestRunIterationReturnValues:
+    async def test_empty_queue_returns_none(self):
+        s = _settings()
+        result = await wf.run_iteration(None, MagicMock(), s)
+        assert result is None
+
+    async def test_completed_returns_status_completed(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
+        ):
+            result = await wf.run_iteration(None, MagicMock(), s)
+        assert result is not None
+        assert result["status"] == "completed"
+        assert result["market_id"] == "MKT-1"
+        assert result["prediction"] == "Yes"
+        assert result["risk_approved"] is False
+
+    async def test_prediction_api_failure_returns_requeued(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        with patch(
+            "app.workflow._call_prediction_api",
+            new_callable=AsyncMock,
+            side_effect=Exception("timeout"),
+        ):
+            result = await wf.run_iteration(None, MagicMock(), s)
+        assert result is not None
+        assert result["status"] == "requeued"
+        assert result["market_id"] == "MKT-1"
+
+    async def test_risk_manager_failure_returns_requeued(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch(
+                "app.workflow._call_risk_manager",
+                new_callable=AsyncMock,
+                side_effect=Exception("service unavailable"),
+            ),
+        ):
+            result = await wf.run_iteration(None, MagicMock(), s)
+        assert result is not None
+        assert result["status"] == "requeued"
+        assert result["prediction"] == "Yes"
+
+    async def test_unexpected_exception_returns_failed(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        with patch(
+            "app.workflow._call_prediction_api",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("unexpected"),
+        ):
+            with patch("app.workflow.queue_module.mark_queued") as mock_mq:
+                mock_mq.side_effect = RuntimeError("double failure")
+                result = await wf.run_iteration(None, MagicMock(), s)
+        assert result is not None
+        assert result["status"] == "failed"
+        assert result["market_id"] == "MKT-1"
+
+    async def test_completed_includes_dry_run_flag(self):
+        s = _settings(dry_run=True)
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
+        ):
+            result = await wf.run_iteration(None, MagicMock(), s)
+        assert result["dry_run"] is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_exclusive (scheduler wrapper)
+# ---------------------------------------------------------------------------
+
+
+class TestRunExclusive:
+    async def test_runs_when_lock_free(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
+        ):
+            await wf.run_exclusive(None, MagicMock(), s)
+        entries = qm.get_queue()
+        from app.models import QueueState
+        assert entries[0].queue_state == QueueState.COMPLETED
+
+    async def test_skips_when_lock_already_held(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        async with wf._workflow_lock:
+            await wf.run_exclusive(None, MagicMock(), s)
+        # run_exclusive should have skipped; queue entry stays QUEUED
+        entries = qm.get_queue()
+        from app.models import QueueState
+        assert entries[0].queue_state == QueueState.QUEUED
+
+    async def test_lock_released_after_completion(self):
+        s = _settings()
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
+        ):
+            await wf.run_exclusive(None, MagicMock(), s)
+        assert not wf._workflow_lock.locked()
+
+    async def test_lock_released_after_exception(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        with patch(
+            "app.workflow._call_prediction_api",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("boom"),
+        ):
+            with patch("app.workflow.queue_module.mark_queued") as mock_mq:
+                mock_mq.side_effect = RuntimeError("also failing")
+                await wf.run_exclusive(None, MagicMock(), s)
+        assert not wf._workflow_lock.locked()
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_manual (API wrapper)
+# ---------------------------------------------------------------------------
+
+
+class TestRunManual:
+    async def test_returns_empty_when_queue_is_empty(self):
+        s = _settings()
+        result = await wf.run_manual(None, MagicMock(), s)
+        assert result["status"] == "empty"
+
+    async def test_returns_busy_when_lock_held(self):
+        s = _settings()
+        async with wf._workflow_lock:
+            result = await wf.run_manual(None, MagicMock(), s)
+        assert result["status"] == "busy"
+        assert "started_at" in result
+        assert "elapsed_seconds" in result
+
+    async def test_returns_completed_dict_on_success(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
+        ):
+            result = await wf.run_manual(None, MagicMock(), s)
+        assert result["status"] == "completed"
+        assert result["market_id"] == "MKT-1"
+
+    async def test_lock_released_after_run_manual(self):
+        s = _settings()
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
+        ):
+            await wf.run_manual(None, MagicMock(), s)
+        assert not wf._workflow_lock.locked()
+
+    async def test_second_manual_call_while_first_runs_returns_busy(self):
+        import asyncio as _asyncio
+
+        s = _settings()
+        blocked = _asyncio.Event()
+        unblock = _asyncio.Event()
+
+        async def slow_predict(*args, **kwargs):
+            blocked.set()
+            await unblock.wait()
+            return _pred()
+
+        async def race():
+            with (
+                patch("app.workflow._call_prediction_api", new_callable=AsyncMock, side_effect=slow_predict),
+                patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+                patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
+            ):
+                qm.add_or_update([_opp("MKT-1", 80.0)], s)
+                first = _asyncio.create_task(wf.run_manual(None, MagicMock(), s))
+                await blocked.wait()
+                second = await wf.run_manual(None, MagicMock(), s)
+                unblock.set()
+                await first
+            return second
+
+        second_result = await race()
+        assert second_result["status"] == "busy"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _detect_category (Fix 1 — category mapping)
+# ---------------------------------------------------------------------------
+
+
+class TestDetectCategory:
+    def test_mlb_ticker_prefix_returns_sports(self):
+        assert wf._detect_category("yes Milwaukee", "KXMLB-23-MILWIN") == "Sports"
+
+    def test_nba_ticker_prefix_returns_sports(self):
+        assert wf._detect_category("Lakers win", "KXNBA-LAL-WIN") == "Sports"
+
+    def test_nfl_ticker_prefix_returns_sports(self):
+        assert wf._detect_category("Chiefs game", "KXNFL-KC-WIN") == "Sports"
+
+    def test_nhl_ticker_prefix_returns_sports(self):
+        assert wf._detect_category("Leafs win", "KXNHL-TOR") == "Sports"
+
+    def test_runs_scored_in_title_returns_sports(self):
+        assert wf._detect_category("yes Over 8.5 runs scored", "KXMLB-TOTAL") == "Sports"
+
+    def test_wins_by_in_title_returns_sports(self):
+        assert wf._detect_category("yes Detroit wins by over 1.5 runs", "KXMLB-RLS") == "Sports"
+
+    def test_player_prop_colon_plus_pattern_returns_sports(self):
+        assert wf._detect_category("yes Freddie Freeman: 1+", "KXMLB-PROP") == "Sports"
+
+    def test_unknown_ticker_no_sports_keywords_returns_finance(self):
+        assert wf._detect_category("Will BTC exceed $100k?", "BTCUSD") == "Financials"
+
+    def test_metadata_category_takes_precedence(self):
+        # _detect_category is only called when metadata category is missing/invalid;
+        # this test confirms the helper itself returns finance for non-sports input
+        assert wf._detect_category("Fed rate decision", "KXFED-RATE") == "Financials"
+
+    def test_ticker_case_insensitive(self):
+        assert wf._detect_category("some title", "kxmlb-23-milwin") == "Sports"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _format_question (Fix 3 — question framing)
+# ---------------------------------------------------------------------------
+
+
+class TestFormatQuestion:
+    def test_strips_yes_prefix_and_adds_win_question(self):
+        result = wf._format_question("yes Milwaukee")
+        assert result == "Will Milwaukee win?"
+        assert "yes" not in result.lower().split()[0]
+
+    def test_strips_no_prefix_and_adds_win_question(self):
+        result = wf._format_question("no Detroit")
+        assert result == "Will Detroit win?"
+
+    def test_player_prop_transformed_to_record_question(self):
+        result = wf._format_question("yes Freddie Freeman: 1+")
+        assert result == "Will Freddie Freeman record 1 or more?"
+
+    def test_player_prop_higher_threshold(self):
+        result = wf._format_question("yes Paul Skenes: 7+")
+        assert result == "Will Paul Skenes record 7 or more?"
+
+    def test_already_a_question_passes_through(self):
+        q = "Will BTC exceed $120,000?"
+        assert wf._format_question(q) == q
+
+    def test_over_under_lowercased(self):
+        result = wf._format_question("yes Over 8.5 runs scored")
+        assert result.startswith("Will over")
+
+    def test_wins_by_becomes_will_question(self):
+        result = wf._format_question("yes Detroit wins by over 1.5 runs")
+        assert result == "Will Detroit wins by over 1.5 runs?"
+
+    def test_case_insensitive_prefix_strip(self):
+        result = wf._format_question("YES Milwaukee")
+        assert "Will Milwaukee win?" == result
+
+    def test_no_prefix_short_string_becomes_win_question(self):
+        # Plain team name with no yes/no prefix
+        result = wf._format_question("Atlanta Braves")
+        assert result == "Will Atlanta Braves win?"
+
+    def test_long_payload_becomes_generic_will_question(self):
+        long = "yes Some Very Long Title That Does Not Match Any Special Pattern Here"
+        result = wf._format_question(long)
+        assert result.startswith("Will ")
+        assert result.endswith("?")
+
+
+# ---------------------------------------------------------------------------
+# Tests: multi-outcome skip (Fix 2 — filter multi-outcome markets)
+# ---------------------------------------------------------------------------
+
+
+class TestMultiOutcomeSkip:
+    async def test_multi_outcome_title_returns_skipped(self):
+        s = _settings()
+        qm.add_or_update(
+            [_opp("MKT-MULTI", 80.0, title="yes Milwaukee,yes Baltimore,yes Detroit")],
+            s,
+        )
+        result = await wf.run_iteration(None, MagicMock(), s)
+        assert result is not None
+        assert result["status"] == "skipped"
+        assert result["reason"] == "multi_outcome"
+        assert result["market_id"] == "MKT-MULTI"
+
+    async def test_multi_outcome_entry_marked_completed(self):
+        s = _settings()
+        qm.add_or_update(
+            [_opp("MKT-MULTI", 80.0, title="yes A,yes B")],
+            s,
+        )
+        await wf.run_iteration(None, MagicMock(), s)
+        entries = qm.get_queue()
+        assert entries[0].queue_state == QueueState.COMPLETED
+
+    async def test_multi_outcome_does_not_call_prediction_api(self):
+        s = _settings()
+        qm.add_or_update(
+            [_opp("MKT-MULTI", 80.0, title="yes X,yes Y")],
+            s,
+        )
+        mock_pred = AsyncMock(return_value=_pred())
+        with patch("app.workflow._call_prediction_api", mock_pred):
+            await wf.run_iteration(None, MagicMock(), s)
+        mock_pred.assert_not_called()
+
+    async def test_single_outcome_with_yes_prefix_not_skipped(self):
+        # "yes Milwaukee" — no comma — must proceed to prediction
+        s = _settings()
+        qm.add_or_update(
+            [_opp("MKT-SINGLE", 80.0, title="yes Milwaukee")],
+            s,
+        )
+        mock_pred = AsyncMock(return_value=_pred())
+        with (
+            patch("app.workflow._call_prediction_api", mock_pred),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
+        ):
+            result = await wf.run_iteration(None, MagicMock(), s)
+        mock_pred.assert_called_once()
+        assert result is not None
+        assert result["status"] == "completed"
+
+    async def test_regular_question_with_comma_not_skipped(self):
+        # Legitimate question that happens to have a comma is not filtered
+        # because it doesn't start with "yes " or "no "
+        s = _settings()
+        qm.add_or_update(
+            [_opp("MKT-Q", 80.0, title="Will X or Y happen?")],
+            s,
+        )
+        mock_pred = AsyncMock(return_value=_pred())
+        with (
+            patch("app.workflow._call_prediction_api", mock_pred),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
+        ):
+            result = await wf.run_iteration(None, MagicMock(), s)
+        assert result is not None
+        assert result["status"] == "completed"
+
+    async def test_no_prefix_multi_outcome_skipped(self):
+        s = _settings()
+        qm.add_or_update(
+            [_opp("MKT-NO", 80.0, title="no Milwaukee,no Detroit")],
+            s,
+        )
+        result = await wf.run_iteration(None, MagicMock(), s)
+        assert result is not None
+        assert result["status"] == "skipped"

@@ -3,7 +3,8 @@
 The AI Core service for the platform. Fourth production service deployed
 (SPEC-007), after [Ollama](OLLAMA.md), [SearXNG](SEARXNG.md), and
 [PostgreSQL](POSTGRES.md). Persistence layer added in SPEC-008. SearXNG
-integration added in SPEC-014.
+integration added in SPEC-014. Historical confidence calibration added in
+SPEC-022.
 
 ## Responsibility
 
@@ -96,13 +97,20 @@ For every `POST /predict` call:
 7. **Inference timed** — wall-clock time stops; `execution_ms` recorded.
 8. **Model output validated** — JSON parse, required fields, confidence
    range, option membership (502 on failure).
-9. **`prediction_id` generated** — `pred_YYYYMMDDTHHMMSS_xxxxxxxx`.
-10. **Response constructed** — `PredictionResponse` assembled from validated
-    LLM output, request metadata, and search result metadata.
-11. **Persisted** — `prediction_requests` and `prediction_responses` rows
-    inserted in a single transaction. If the pool is unavailable, this step
-    is skipped silently (the API response is unaffected).
-12. **Response returned** — structured JSON, always includes `prediction_id`.
+9. **Confidence calibrated** — `calibrator.apply_calibration()` queries
+   resolved historical outcomes and may reduce confidence downward.
+   Confidence never increases. If history is insufficient or the DB is
+   unavailable, model confidence is returned unchanged (cold-start
+   behaviour). See the Confidence Calibration section below.
+10. **`prediction_id` generated** — `pred_YYYYMMDDTHHMMSS_xxxxxxxx`.
+11. **Response constructed** — `PredictionResponse` assembled from validated
+    LLM output, calibrated confidence, request metadata, and search result
+    metadata.
+12. **Persisted** — `prediction_requests` and `prediction_responses` rows
+    inserted in a single transaction. If calibration was applied, the
+    original/calibrated/reason are stored in `response_payload.calibration`.
+    If the pool is unavailable, this step is skipped silently.
+13. **Response returned** — structured JSON, always includes `prediction_id`.
 
 ## SearXNG Integration
 
@@ -239,6 +247,9 @@ byte is returned (`stream: false`). The thinking chain is discarded
 | `SEARXNG_TIMEOUT` | `10.0` | Search timeout in seconds |
 | `SEARXNG_MAX_RESULTS` | `5` | Maximum results to include in prompt |
 | `POSTGRES_URL` | `""` | PostgreSQL connection URL (empty = disabled) |
+| `CONFIDENCE_CALIBRATION_ENABLED` | `true` | Set to `false` to disable historical confidence calibration |
+| `CONFIDENCE_MIN_HISTORY` | `25` | Minimum resolved predictions required before calibration applies |
+| `CONFIDENCE_MAX_REDUCTION` | `0.30` | Maximum confidence reduction per calibration pass (0.0–1.0) |
 
 ## Module Layout
 
@@ -253,6 +264,7 @@ byte is returned (`stream: false`). The thinking chain is discarded
 | `validators.py` | LLM response parsing and validation |
 | `health.py` | Health status aggregation |
 | `postgres.py` | Connection pool lifecycle and prediction persistence |
+| `calibrator.py` | Historical confidence calibration (SPEC-022) |
 | `searxng.py` | Search decision logic and SearXNG HTTP client |
 
 ## Connection Information
@@ -266,6 +278,104 @@ Exposed to localhost only. Not reachable from outside the host machine.
 Other containers on the `internal` network reach it as
 `http://prediction-api:8000`.
 
+## Confidence Calibration
+
+Added in SPEC-022. After the model returns a prediction, the Prediction
+API queries its own resolved historical outcomes and may reduce confidence
+to better reflect demonstrated performance.
+
+### Philosophy
+
+Confidence is a probability estimate. It should be earned through
+demonstrated historical performance. If the model has historically been
+correct 65% of the time, a response confidence of 0.90 is overstated.
+Calibration corrects this by comparing model confidence to observed
+accuracy, without changing the prediction or reasoning.
+
+### Cold Start
+
+If fewer than `CONFIDENCE_MIN_HISTORY` (default: 25) resolved predictions
+exist, calibration is skipped and the model's original confidence is
+returned unchanged. This prevents a handful of outcomes from producing
+misleading adjustments early in the platform's life.
+
+### Historical Inputs
+
+Calibration reads only **resolved** predictions — rows that appear in
+`prediction.prediction_outcomes`. Unresolved predictions are never used.
+
+Statistics derived:
+
+- **Overall accuracy** — fraction of all resolved predictions that matched
+  their outcome.
+- **Category accuracy** — same, filtered to the current request's category.
+- **Model accuracy** — same, filtered to the current model name.
+- **Recent trend** — accuracy in the newer half of history vs. the older
+  half (positive = improving, negative = declining).
+
+### Calibration Algorithm
+
+1. **Reference accuracy** — if category has ≥ 10 resolved predictions,
+   blend category accuracy into overall accuracy, weighted by sample size
+   (full category weight at 50+ samples). Otherwise use overall accuracy.
+
+2. **Sample-size factor** — ramps from 0 → 1 as total resolved predictions
+   grow from `CONFIDENCE_MIN_HISTORY` to `4 × CONFIDENCE_MIN_HISTORY`.
+   Small samples produce weaker adjustments.
+
+3. **Trend modifier** — recent trend (±1.0) contributes ±0.15 to the
+   sample-size factor. Improving accuracy makes calibration slightly more
+   aggressive; declining accuracy makes it slightly softer.
+
+4. **Gap** — `model_confidence − reference_accuracy`. If ≤ 0, confidence
+   is unchanged (the model is already appropriately humble).
+
+5. **Reduction** — `min(gap × effective_factor, CONFIDENCE_MAX_REDUCTION)`.
+   Capped at `CONFIDENCE_MAX_REDUCTION` (default: 0.30) regardless of gap
+   size.
+
+6. **Final confidence** — `max(0.0, model_confidence − reduction)`.
+
+### Confidence Limits
+
+Calibration may only **reduce or leave unchanged** the model's confidence.
+It never increases confidence. `CalibrationResult.original_confidence` is
+always equal to the model's raw output.
+
+### Transparency
+
+When an adjustment is applied, the following is logged:
+
+```text
+confidence_calibrated original=0.9000 -> hist_acc=0.6500 -> reduction=0.1000 -> final=0.8000 | ...
+```
+
+Nothing is logged when no adjustment occurs.
+
+Calibration metadata is stored in `response_payload.calibration` in
+PostgreSQL when an adjustment was applied:
+
+```json
+{
+  "calibration": {
+    "original_confidence": 0.90,
+    "calibrated_confidence": 0.80,
+    "reason": "reduced:overall(n=120),hist_acc=0.6500,gap=0.2500,factor=0.4000,reduction=0.1000"
+  }
+}
+```
+
+The external API response (`confidence` field) reflects the calibrated
+value. The rest of the contract — `prediction`, `reasoning`, `key_factors`,
+`sources` — is unchanged.
+
+### Disabling
+
+Set `CONFIDENCE_CALIBRATION_ENABLED=false` in `.env` to disable entirely.
+All other calibration env vars remain in place but have no effect.
+
+---
+
 ## Running Tests
 
 ```bash
@@ -275,7 +385,7 @@ pytest tests/ -v
 ```
 
 Tests mock Ollama, PostgreSQL, and SearXNG — no running services needed.
-63 tests covering:
+96 tests covering:
 
 - Health ok / degraded states
 - Successful prediction with all required fields present
@@ -301,6 +411,18 @@ Tests mock Ollama, PostgreSQL, and SearXNG — no running services needed.
 - All exemptions: sunrise/sunset, arithmetic, gravity
 - Timeout/connection error/HTTP error all return empty list
 - Empty result filtering (no-snippet results excluded)
+- Calibration disabled → model confidence returned unchanged
+- Cold start (no history, insufficient history) → unchanged
+- Large sample → calibration applied; small sample → weaker adjustment
+- Confidence never increases above model output
+- Max reduction cap enforced
+- Improving vs. declining trend changes adjustment magnitude
+- Category accuracy preferred over overall when sufficient samples
+- Falls back to overall accuracy when category samples insufficient
+- Result is never below 0.0
+- Deterministic output (same inputs → same output every call)
+- DB fetch failure → unchanged (graceful degradation)
+- `original_confidence` always preserved in result
 
 ## Deployment
 
@@ -348,3 +470,21 @@ question or recency.
 **7. Evidence deduplication.** Multiple SearXNG results sometimes carry
 the same snippet from different sources. Deduplication before prompt
 construction would reduce token usage without losing information.
+
+**8. Advanced calibration methods.** The current calibration is a
+deterministic weighted-accuracy blend. More sophisticated approaches are
+identified for future consideration:
+
+- **Bayesian calibration** — update a Beta distribution over accuracy as
+  outcomes arrive; credible intervals provide natural confidence bounds.
+- **Reliability diagrams / ECE** — plot predicted confidence bins vs.
+  observed accuracy to diagnose systematic over/underconfidence.
+- **Platt scaling** — fit a logistic regression on `(confidence → outcome)`
+  to learn a global recalibration curve.
+- **Isotonic regression** — non-parametric monotone calibration; useful
+  when confidence/accuracy relationship is non-linear.
+- **Time-decayed weighting** — older outcomes discount exponentially so
+  recent performance dominates the reference accuracy.
+- **Per-market calibration** — some market types (sports parlays vs.
+  political elections) may have very different accuracy profiles; market
+  category or ticker pattern could drive separate calibration tracks.

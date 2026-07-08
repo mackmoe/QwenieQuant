@@ -4,6 +4,7 @@ from app.commands import (
     handle_analyze,
     handle_predict,
     handle_reflect,
+    handle_run,
     handle_status,
     is_authorized,
 )
@@ -189,3 +190,56 @@ async def test_handle_reflect_missing_analysis_id_returns_error():
     learning = _learn_client(analyze={"predictions_analyzed": 0})
     result = await handle_reflect(_ALLOWED_IDS[0], learning, _reflect_client())
     assert "❌" in result
+
+
+# ── handle_run ─────────────────────────────────────────────────────────────
+
+
+def _queue_client(run_result: dict | None = None):
+    c = MagicMock()
+    c.run_workflow = AsyncMock(return_value=run_result or {"status": "empty"})
+    return c
+
+
+async def test_handle_run_empty_queue_returns_string():
+    result = await handle_run(_ALLOWED_IDS[0], _queue_client({"status": "empty"}))
+    assert isinstance(result, str)
+    assert "empty" in result.lower() or "queue" in result.lower()
+
+
+async def test_handle_run_completed_shows_success():
+    payload = {
+        "status": "completed",
+        "market_id": "MKT-1",
+        "ticker": "MKT-1",
+        "title": "Test market",
+        "prediction": "Yes",
+        "confidence": 0.75,
+        "risk_approved": False,
+        "risk_reason": "low ev",
+        "trade_status": "rejected",
+        "duration_ms": 1000,
+        "dry_run": True,
+    }
+    result = await handle_run(_ALLOWED_IDS[0], _queue_client(payload))
+    assert "Yes" in result or "complete" in result.lower()
+
+
+async def test_handle_run_busy_shows_busy():
+    payload = {"status": "busy", "started_at": None, "elapsed_seconds": None}
+    result = await handle_run(_ALLOWED_IDS[0], _queue_client(payload))
+    assert "busy" in result.lower() or "Running" in result
+
+
+async def test_handle_run_service_error_shows_error():
+    client = _queue_client()
+    client.run_workflow = AsyncMock(return_value={"error": "connection refused"})
+    result = await handle_run(_ALLOWED_IDS[0], client)
+    # format_run receives {"error": ...} which has no "status" key → unknown status
+    assert isinstance(result, str)
+
+
+async def test_handle_run_calls_run_workflow():
+    client = _queue_client()
+    await handle_run(_ALLOWED_IDS[0], client)
+    client.run_workflow.assert_called_once()

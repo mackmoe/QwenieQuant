@@ -69,8 +69,17 @@ async def run_scan(
     client = KalshiConnectorClient(settings.kalshi_connector_url, http)
     raw_markets = await client.get_markets(limit=settings.kalshi_market_limit)
 
+    # Events carry Kalshi's category + series_ticker for each market
+    # (hierarchy: Category → Series → Event → Market).
+    raw_events = await client.get_events()
+    events_by_ticker = {
+        e["event_ticker"]: e for e in raw_events if e.get("event_ticker")
+    }
+
     now = datetime.now(timezone.utc)
-    tiered = run_scoring(raw_markets, settings, now=now)
+    tiered = run_scoring(
+        raw_markets, settings, now=now, events_by_ticker=events_by_ticker
+    )
 
     duration_ms = int((time.monotonic() - t0) * 1000)
 
@@ -90,6 +99,13 @@ async def run_scan(
     if pool is not None:
         from app.postgres import upsert_scores
         await upsert_scores(pool, tiered)
+
+    tier3 = [m for m in tiered if m.assigned_tier == 3]
+    from app.queue_publisher import publish_opportunities
+    try:
+        await publish_opportunities(http, settings, tier3)
+    except Exception:
+        logger.exception("Queue publish failed unexpectedly; scan result retained")
 
     return tiered, duration_ms
 

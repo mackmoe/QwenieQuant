@@ -3,7 +3,7 @@ import re
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.models import PredictionCategory, PredictionRequest, PredictionResponse
+from app.models import PredictionRequest, PredictionResponse
 import app.postgres as pg
 
 _PREDICTION_ID_RE = re.compile(r"^pred_\d{8}T\d{6}_[0-9a-f]{8}$")
@@ -12,7 +12,7 @@ _PREDICTION_ID_RE = re.compile(r"^pred_\d{8}T\d{6}_[0-9a-f]{8}$")
 def _request():
     return PredictionRequest(
         question="Will Bitcoin exceed $100,000 by end of March 2025?",
-        category=PredictionCategory.finance,
+        category="Finance",
         options=["Yes", "No"],
     )
 

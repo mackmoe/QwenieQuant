@@ -161,6 +161,7 @@ async def test_run_scan_returns_scored_markets_and_duration():
     with patch("app.scheduler.KalshiConnectorClient") as MockKC:
         instance = MockKC.return_value
         instance.get_markets = AsyncMock(return_value=raw)
+        instance.get_events = AsyncMock(return_value=[])
 
         tiered, duration_ms = await run_scan(mock_http, _settings())
 
@@ -175,6 +176,7 @@ async def test_run_scan_updates_module_state():
     with patch("app.scheduler.KalshiConnectorClient") as MockKC:
         instance = MockKC.return_value
         instance.get_markets = AsyncMock(return_value=raw)
+        instance.get_events = AsyncMock(return_value=[])
 
         await run_scan(mock_http, _settings())
 
@@ -189,6 +191,7 @@ async def test_run_scan_empty_markets():
     with patch("app.scheduler.KalshiConnectorClient") as MockKC:
         instance = MockKC.return_value
         instance.get_markets = AsyncMock(return_value=[])
+        instance.get_events = AsyncMock(return_value=[])
 
         tiered, duration_ms = await run_scan(mock_http, _settings())
 
@@ -203,6 +206,7 @@ async def test_run_scan_kalshi_unavailable_returns_empty():
     with patch("app.scheduler.KalshiConnectorClient") as MockKC:
         instance = MockKC.return_value
         instance.get_markets = AsyncMock(return_value=[])
+        instance.get_events = AsyncMock(return_value=[])
 
         tiered, _ = await run_scan(mock_http, _settings())
 
@@ -216,6 +220,7 @@ async def test_run_scan_without_pool_skips_postgres():
     with patch("app.scheduler.KalshiConnectorClient") as MockKC:
         instance = MockKC.return_value
         instance.get_markets = AsyncMock(return_value=raw)
+        instance.get_events = AsyncMock(return_value=[])
 
         with patch("app.postgres.upsert_scores", new_callable=AsyncMock) as mock_upsert:
             tiered, _ = await run_scan(mock_http, _settings(), pool=None)
@@ -232,6 +237,7 @@ async def test_run_scan_with_pool_calls_upsert():
     with patch("app.scheduler.KalshiConnectorClient") as MockKC:
         instance = MockKC.return_value
         instance.get_markets = AsyncMock(return_value=raw)
+        instance.get_events = AsyncMock(return_value=[])
 
         with patch("app.postgres.upsert_scores", new_callable=AsyncMock) as mock_upsert:
             tiered, _ = await run_scan(mock_http, _settings(), pool=mock_pool)
@@ -248,6 +254,7 @@ async def test_run_scan_sorted_descending():
     with patch("app.scheduler.KalshiConnectorClient") as MockKC:
         instance = MockKC.return_value
         instance.get_markets = AsyncMock(return_value=raw)
+        instance.get_events = AsyncMock(return_value=[])
 
         tiered, _ = await run_scan(mock_http, _settings())
 
@@ -261,13 +268,118 @@ async def test_run_scan_overwrites_previous_state():
     with patch("app.scheduler.KalshiConnectorClient") as MockKC:
         instance = MockKC.return_value
         instance.get_markets = AsyncMock(return_value=[_active_market("FIRST")])
-        await run_scan(mock_http, _settings())
+        instance.get_events = AsyncMock(return_value=[])
+        with patch("app.queue_publisher.publish_opportunities", new_callable=AsyncMock):
+            await run_scan(mock_http, _settings())
 
         _, markets_after_first = get_state()
         assert len(markets_after_first) == 1
 
         instance.get_markets = AsyncMock(return_value=[_active_market("A"), _active_market("B")])
-        await run_scan(mock_http, _settings())
+        instance.get_events = AsyncMock(return_value=[])
+        with patch("app.queue_publisher.publish_opportunities", new_callable=AsyncMock):
+            await run_scan(mock_http, _settings())
 
     _, markets_after_second = get_state()
     assert len(markets_after_second) == 2
+
+
+# ---------------------------------------------------------------------------
+# run_scan — queue publishing integration
+# ---------------------------------------------------------------------------
+
+
+async def test_run_scan_calls_publish_with_tier3_only():
+    raw = [_active_market(f"T{i}", days_out=5, volume=5_000) for i in range(5)]
+    mock_http = MagicMock(spec=httpx.AsyncClient)
+
+    with patch("app.scheduler.KalshiConnectorClient") as MockKC:
+        instance = MockKC.return_value
+        instance.get_markets = AsyncMock(return_value=raw)
+        instance.get_events = AsyncMock(return_value=[])
+
+        with patch(
+            "app.queue_publisher.publish_opportunities", new_callable=AsyncMock
+        ) as mock_publish:
+            mock_publish.return_value = 3
+            await run_scan(mock_http, _settings(max_tier3_markets=3))
+
+    mock_publish.assert_called_once()
+    _, _, tier3_arg = mock_publish.call_args[0]
+    assert all(m.assigned_tier == 3 for m in tier3_arg)
+
+
+async def test_run_scan_does_not_publish_tier1_or_tier2():
+    raw = [_active_market(f"T{i}", days_out=5, volume=5_000) for i in range(5)]
+    mock_http = MagicMock(spec=httpx.AsyncClient)
+
+    with patch("app.scheduler.KalshiConnectorClient") as MockKC:
+        instance = MockKC.return_value
+        instance.get_markets = AsyncMock(return_value=raw)
+        instance.get_events = AsyncMock(return_value=[])
+
+        with patch(
+            "app.queue_publisher.publish_opportunities", new_callable=AsyncMock
+        ) as mock_publish:
+            await run_scan(mock_http, _settings(max_tier3_markets=3))
+
+    _, _, tier3_arg = mock_publish.call_args[0]
+    assert not any(m.assigned_tier in (1, 2) for m in tier3_arg)
+
+
+async def test_run_scan_publish_failure_does_not_stop_scan():
+    raw = [_active_market("T1")]
+    mock_http = MagicMock(spec=httpx.AsyncClient)
+
+    with patch("app.scheduler.KalshiConnectorClient") as MockKC:
+        instance = MockKC.return_value
+        instance.get_markets = AsyncMock(return_value=raw)
+        instance.get_events = AsyncMock(return_value=[])
+
+        with patch(
+            "app.queue_publisher.publish_opportunities",
+            new_callable=AsyncMock,
+            side_effect=Exception("Queue down"),
+        ):
+            # run_scan wraps publish in try/except — must not raise
+            tiered, duration_ms = await run_scan(mock_http, _settings())
+
+    assert len(tiered) == 1
+    _, markets = get_state()
+    assert len(markets) == 1
+
+
+async def test_run_scan_publish_disabled_skips_publish():
+    raw = [_active_market("T1")]
+    mock_http = MagicMock(spec=httpx.AsyncClient)
+
+    with patch("app.scheduler.KalshiConnectorClient") as MockKC:
+        instance = MockKC.return_value
+        instance.get_markets = AsyncMock(return_value=raw)
+        instance.get_events = AsyncMock(return_value=[])
+
+        with patch(
+            "app.queue_publisher.publish_opportunities", new_callable=AsyncMock
+        ) as mock_publish:
+            await run_scan(mock_http, _settings(publish_to_queue=False))
+
+    # publish_opportunities is still called; it returns early internally
+    mock_publish.assert_called_once()
+
+
+async def test_run_scan_empty_markets_publishes_empty_tier3():
+    mock_http = MagicMock(spec=httpx.AsyncClient)
+
+    with patch("app.scheduler.KalshiConnectorClient") as MockKC:
+        instance = MockKC.return_value
+        instance.get_markets = AsyncMock(return_value=[])
+        instance.get_events = AsyncMock(return_value=[])
+
+        with patch(
+            "app.queue_publisher.publish_opportunities", new_callable=AsyncMock
+        ) as mock_publish:
+            mock_publish.return_value = 0
+            await run_scan(mock_http, _settings())
+
+    _, _, tier3_arg = mock_publish.call_args[0]
+    assert tier3_arg == []

@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app import postgres as postgres_module
 from app import queue as queue_module
+from app import workflow as workflow_module
 from app.config import Settings
 from app.health import get_health
 from app.models import (
@@ -18,6 +19,7 @@ from app.models import (
     QueueResponse,
     QueueState,
     RefreshResponse,
+    RunResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -26,12 +28,14 @@ router = APIRouter()
 
 _pool = None
 _settings: Settings | None = None
+_http = None
 
 
-def set_dependencies(pool, settings: Settings) -> None:
-    global _pool, _settings
+def set_dependencies(pool, settings: Settings, http=None) -> None:
+    global _pool, _settings, _http
     _pool = pool
     _settings = settings
+    _http = http
 
 
 @router.get("/health", response_model=HealthStatus)
@@ -111,3 +115,13 @@ async def cancel_entry(market_id: str):
             status_code=404,
             detail=f"Market {market_id!r} not found in active queue",
         )
+
+
+@router.post("/run", response_model=RunResponse)
+async def run_workflow() -> RunResponse:
+    if _settings is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    if _http is None:
+        raise HTTPException(status_code=503, detail="HTTP client not available")
+    result = await workflow_module.run_manual(_pool, _http, _settings)
+    return RunResponse(**result)

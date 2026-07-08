@@ -62,7 +62,7 @@ class KalshiClient:
 
     async def probe_reachable(self) -> bool:
         try:
-            await self._http.get(self._base_url, timeout=5.0)
+            await self._http.get(self._base_url + "/markets?limit=1", timeout=5.0)
             return True
         except (httpx.ConnectError, httpx.TimeoutException):
             return False

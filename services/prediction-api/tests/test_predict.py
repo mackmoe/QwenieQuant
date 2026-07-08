@@ -73,10 +73,18 @@ def test_predict_with_context_and_resolution_date():
     assert response.status_code == 200
 
 
-def test_predict_invalid_category():
-    bad = {**_VALID_REQUEST, "category": "astrology"}
+def test_predict_empty_category_rejected():
+    bad = {**_VALID_REQUEST, "category": ""}
     response = client.post("/predict", json=bad)
     assert response.status_code == 422
+
+
+def test_predict_any_kalshi_category_accepted():
+    # Kalshi adds categories without notice (e.g. "Exotics"), so category
+    # is an open string — unknown values must not be rejected as 422.
+    req = {**_VALID_REQUEST, "category": "Exotics"}
+    response = client.post("/predict", json=req)
+    assert response.status_code != 422
 
 
 def test_predict_question_too_short():

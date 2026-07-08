@@ -11,7 +11,7 @@ class Account(BaseModel):
 class Position(BaseModel):
     ticker: str
     side: str     # "yes" or "no"
-    quantity: int
+    count: int
     realized_pnl: int    # in cents
     unrealized_pnl: int  # in cents
     market_exposure: int  # in cents
@@ -23,7 +23,7 @@ def _normalize_position(raw: dict) -> Position:
     return Position(
         ticker=raw.get("ticker", ""),
         side=side,
-        quantity=abs(raw_qty),
+        count=abs(raw_qty),
         realized_pnl=raw.get("realized_pnl", 0),
         unrealized_pnl=raw.get("unrealized_pnl", 0),
         market_exposure=raw.get("market_exposure", 0),

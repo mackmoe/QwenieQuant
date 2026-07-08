@@ -205,6 +205,19 @@ class TestExpiration:
         removed = qm.expire_stale(s)
         assert removed == 1
 
+    def test_in_progress_entry_not_expired(self):
+        # An IN_PROGRESS entry must never be expired: doing so makes
+        # mark_completed() silently fail and the entry gets stuck,
+        # potentially causing a duplicate prediction cycle.
+        s = _settings(queue_expiration_buffer_seconds=0)
+        past = _now() - timedelta(hours=1)
+        qm.add_or_update([_opp("MKT-1", 80.0, expiration_time=past)], s)
+        qm.mark_in_progress("MKT-1")
+        removed = qm.expire_stale(s)
+        assert removed == 0
+        entry = qm.get_queue()[0]
+        assert entry.queue_state == QueueState.IN_PROGRESS
+
 
 # ---------------------------------------------------------------------------
 # Tests: get_next

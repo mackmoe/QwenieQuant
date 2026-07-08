@@ -49,12 +49,23 @@ class Settings(BaseSettings):
     prediction_api_url: str = "http://prediction-api:8000"
     learning_engine_url: str = "http://learning-engine:8001"
     reflection_engine_url: str = "http://reflection-engine:8002"
+    opportunity_engine_url: str = "http://opportunity-engine:8005"
+    prediction_queue_url: str = "http://prediction-queue:8006"
+    risk_manager_url: str = "http://risk-manager:8004"
     ollama_url: str = "http://ollama:11434"
     searxng_url: str = "http://searxng:8080"
+
+    # Display-only flag: reflects prediction-api's calibration setting.
+    confidence_calibration_enabled: bool = True
 
     # Default timeout for service health checks and /analyze, /reflect.
     # /predict uses its own 330 s override (qwen3:8b thinking chain).
     http_timeout: float = 60.0
+
+    # Automatic workflow notifications. Set DISCORD_NOTIFICATION_CHANNEL_ID to
+    # enable; leave blank to disable notifications (slash commands unaffected).
+    discord_notifications_enabled: bool = True
+    discord_notification_channel_id: int | None = None
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
@@ -73,6 +84,13 @@ class Settings(BaseSettings):
             _PatchedDotEnvSource(settings_cls),
             file_secret_settings,
         )
+
+    @field_validator("discord_notification_channel_id", mode="before")
+    @classmethod
+    def _parse_channel_id(cls, v: Any) -> Any:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
 
     @field_validator("allowed_user_ids", mode="before")
     @classmethod

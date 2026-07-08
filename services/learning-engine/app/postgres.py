@@ -32,8 +32,11 @@ CREATE TABLE IF NOT EXISTS learning.learning_summaries (
     average_execution_ms    DOUBLE PRECISION,
     model_breakdown         JSONB            NOT NULL DEFAULT '{}',
     category_breakdown      JSONB            NOT NULL DEFAULT '{}',
-    observations            JSONB            NOT NULL DEFAULT '[]'
+    observations            JSONB            NOT NULL DEFAULT '[]',
+    diagnostics             JSONB            NOT NULL DEFAULT '{}'
 );
+ALTER TABLE learning.learning_summaries
+    ADD COLUMN IF NOT EXISTS diagnostics JSONB NOT NULL DEFAULT '{}';
 """
 
 
@@ -99,15 +102,28 @@ async def fetch_predictions(
                 req.prediction_id,
                 req.question,
                 req.category,
+                req.market_id,
                 req.created_at,
                 res.prediction,
                 res.confidence,
                 res.model,
                 res.execution_ms,
-                out.outcome
+                res.search_used,
+                out.outcome,
+                wr.approved,
+                pq.priority_score AS queue_priority_score
             FROM prediction.prediction_requests  req
             JOIN prediction.prediction_responses res USING (prediction_id)
             LEFT JOIN prediction.prediction_outcomes out USING (prediction_id)
+            LEFT JOIN LATERAL (
+                SELECT approved, queue_id
+                FROM queue.workflow_results
+                WHERE prediction_id = req.prediction_id
+                ORDER BY executed_at DESC NULLS LAST
+                LIMIT 1
+            ) wr ON true
+            LEFT JOIN queue.prediction_queue pq
+                ON pq.queue_id::text = wr.queue_id
             WHERE ($1::timestamptz IS NULL OR req.created_at >= $1)
               AND ($2::timestamptz IS NULL OR req.created_at <= $2)
             ORDER BY req.created_at DESC
@@ -130,8 +146,8 @@ async def persist_summary(summary: AnalysisSummary) -> None:
                 (analysis_id, analyzed_at, time_range_start, time_range_end,
                  predictions_analyzed, outcomes_available, accuracy,
                  average_confidence, average_execution_ms,
-                 model_breakdown, category_breakdown, observations)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                 model_breakdown, category_breakdown, observations, diagnostics)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             """,
             summary.analysis_id,
             summary.analyzed_at,
@@ -145,4 +161,5 @@ async def persist_summary(summary: AnalysisSummary) -> None:
             summary.model_breakdown,
             summary.category_breakdown,
             summary.observations,
+            summary.diagnostics.model_dump(mode="json"),
         )

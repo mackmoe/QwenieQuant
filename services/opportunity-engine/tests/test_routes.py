@@ -325,6 +325,7 @@ def test_refresh_triggers_scan(tc):
     with patch("app.scheduler.KalshiConnectorClient") as MockKC:
         instance = MockKC.return_value
         instance.get_markets = AsyncMock(return_value=raw)
+        instance.get_events = AsyncMock(return_value=[])
         r = client.post("/refresh")
 
     assert r.status_code == 200
@@ -357,6 +358,7 @@ def test_refresh_updates_in_memory_state(tc):
     with patch("app.scheduler.KalshiConnectorClient") as MockKC:
         instance = MockKC.return_value
         instance.get_markets = AsyncMock(return_value=raw)
+        instance.get_events = AsyncMock(return_value=[])
         client.post("/refresh")
 
     from app.scheduler import get_state
@@ -371,6 +373,7 @@ def test_refresh_empty_kalshi_returns_zero(tc):
     with patch("app.scheduler.KalshiConnectorClient") as MockKC:
         instance = MockKC.return_value
         instance.get_markets = AsyncMock(return_value=[])
+        instance.get_events = AsyncMock(return_value=[])
         r = client.post("/refresh")
 
     assert r.status_code == 200

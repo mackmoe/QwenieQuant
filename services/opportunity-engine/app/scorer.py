@@ -65,9 +65,17 @@ def score_market(
 
     Returns (0.0, {}) for inactive or malformed markets.
     """
-    # Gate: only active markets are worth scoring
-    if market.get("status") != "active":
+    # Gate: only active/open markets are worth scoring.
+    # Kalshi renamed the status value from "active" to "open" in their API;
+    # accept both so scoring survives the migration in either direction.
+    if market.get("status") not in ("active", "open"):
         return 0.0, {"status": "inactive"}
+
+    # Gate: exclude MVE (multivariate/parlay) markets — Kalshi's auto-generated
+    # combination contracts.  Their titles aggregate several outcomes and their
+    # synthetic events carry no category; the workflow skips them anyway.
+    if market.get("mve_collection_ticker"):
+        return 0.0, {"status": "mve_excluded"}
 
     factors: dict = {}
 
@@ -155,14 +163,31 @@ def score_all(
     markets: list[dict],
     now: datetime,
     settings: Settings,
+    events_by_ticker: Optional[dict] = None,
 ) -> list[ScoredMarket]:
-    """Score every market and return unsorted ScoredMarket objects."""
+    """
+    Score every market and return unsorted ScoredMarket objects.
+
+    events_by_ticker maps event_ticker → event dict; when provided, each
+    market's metadata gains Kalshi's category / series_ticker / event_ticker
+    (hierarchy: Category → Series → Event → Market).
+    """
+    events_by_ticker = events_by_ticker or {}
     results: list[ScoredMarket] = []
     for m in markets:
         ticker = m.get("ticker", "")
         if not ticker:
             continue
         score, factors = score_market(m, now, settings)
+        event_ticker = m.get("event_ticker")
+        if event_ticker:
+            factors["event_ticker"] = event_ticker
+            event = events_by_ticker.get(event_ticker)
+            if event:
+                if event.get("category"):
+                    factors["category"] = event["category"]
+                if event.get("series_ticker"):
+                    factors["series_ticker"] = event["series_ticker"]
         results.append(
             ScoredMarket(
                 market_id=ticker,
@@ -233,11 +258,12 @@ def run_scoring(
     markets: list[dict],
     settings: Settings,
     now: Optional[datetime] = None,
+    events_by_ticker: Optional[dict] = None,
 ) -> list[ScoredMarket]:
     """Score all markets and assign tiers. Returns sorted list."""
     if now is None:
         now = datetime.now(timezone.utc)
-    scored = score_all(markets, now, settings)
+    scored = score_all(markets, now, settings, events_by_ticker=events_by_ticker)
     return assign_tiers(
         scored,
         min_priority_score=settings.min_priority_score,

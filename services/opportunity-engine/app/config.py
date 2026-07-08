@@ -29,9 +29,14 @@ class Settings(BaseSettings):
 
     # Infrastructure
     kalshi_connector_url: str = "http://kalshi-connector:8003"
-    kalshi_market_limit: int = 1000  # markets to fetch per scan
+    kalshi_market_limit: int = 6000  # markets to fetch per scan (paginated; MVE parlays dominate early pages)
     postgres_url: str = ""
     http_timeout: float = 30.0
+
+    # Prediction Queue publishing
+    prediction_queue_url: str = "http://prediction-queue:8006"
+    publish_to_queue: bool = True
+    queue_publish_batch_size: int = 30
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

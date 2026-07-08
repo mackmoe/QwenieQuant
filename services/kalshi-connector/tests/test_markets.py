@@ -105,15 +105,15 @@ def test_normalize_orderbook_yes_levels():
     raw = {"orderbook": {"yes": [[55, 100], [54, 200]], "no": []}}
     ob = _normalize_orderbook("T", raw)
     assert len(ob.yes) == 2
-    assert ob.yes[0] == OrderBookLevel(price=55, quantity=100)
-    assert ob.yes[1] == OrderBookLevel(price=54, quantity=200)
+    assert ob.yes[0] == OrderBookLevel(price=55, count=100)
+    assert ob.yes[1] == OrderBookLevel(price=54, count=200)
 
 
 def test_normalize_orderbook_no_levels():
     raw = {"orderbook": {"yes": [], "no": [[43, 150], [42, 300]]}}
     ob = _normalize_orderbook("T", raw)
     assert len(ob.no) == 2
-    assert ob.no[0] == OrderBookLevel(price=43, quantity=150)
+    assert ob.no[0] == OrderBookLevel(price=43, count=150)
 
 
 def test_normalize_orderbook_empty_book():
@@ -182,3 +182,117 @@ async def test_get_orderbook_calls_ticker_path():
     result = await get_orderbook(client, "AAPL-24-GT150")
     client.get.assert_called_once_with("/markets/AAPL-24-GT150/orderbook")
     assert isinstance(result, OrderBook)
+
+
+# --- Current API format: dollar-string fields (api.elections.kalshi.com) ---
+
+
+def _raw_market_dollars() -> dict:
+    return {
+        "ticker": "KXMLB-26-MILWIN",
+        "event_ticker": "KXMLB-26JUL08MIL",
+        "title": "Milwaukee wins",
+        "status": "open",
+        "yes_bid_dollars": "0.6100",
+        "yes_ask_dollars": "0.6400",
+        "no_bid_dollars": "0.3600",
+        "no_ask_dollars": "0.3900",
+        "volume_fp": "11627.90",
+        "open_interest_fp": "5667.00",
+        "close_time": "2026-07-08T23:00:00Z",
+        "result": "",
+    }
+
+
+def test_normalize_market_dollar_fields_to_cents():
+    m = _normalize_market(_raw_market_dollars())
+    assert m.yes_bid == 61
+    assert m.yes_ask == 64
+    assert m.no_bid == 36
+    assert m.no_ask == 39
+
+
+def test_normalize_market_fp_counts_to_int():
+    m = _normalize_market(_raw_market_dollars())
+    assert m.volume == 11627
+    assert m.open_interest == 5667
+
+
+def test_normalize_market_captures_event_ticker():
+    m = _normalize_market(_raw_market_dollars())
+    assert m.event_ticker == "KXMLB-26JUL08MIL"
+
+
+def test_normalize_market_subcent_price_rounds():
+    raw = _raw_market_dollars()
+    raw["yes_bid_dollars"] = "0.0020"  # 0.2¢ — fractional trading
+    m = _normalize_market(raw)
+    assert m.yes_bid == 0
+
+
+def test_normalize_market_legacy_cent_fields_take_precedence():
+    raw = _raw_market_dollars()
+    raw["yes_bid"] = 55
+    m = _normalize_market(raw)
+    assert m.yes_bid == 55
+
+
+def test_normalize_market_missing_dollar_fields_gives_none():
+    raw = {"ticker": "T", "title": "x", "status": "open"}
+    m = _normalize_market(raw)
+    assert m.yes_bid is None
+    assert m.yes_ask is None
+
+
+def test_normalize_orderbook_fp_format():
+    raw = {"orderbook_fp": {
+        "yes_dollars": [["0.6100", "136.00"], ["0.6000", "5667.00"]],
+        "no_dollars": [["0.3600", "42.00"]],
+    }}
+    ob = _normalize_orderbook("T", raw)
+    assert ob.yes[0] == OrderBookLevel(price=61, count=136)
+    assert ob.yes[1] == OrderBookLevel(price=60, count=5667)
+    assert ob.no[0] == OrderBookLevel(price=36, count=42)
+
+
+def test_normalize_orderbook_fp_empty_sides():
+    raw = {"orderbook_fp": {"yes_dollars": [], "no_dollars": []}}
+    ob = _normalize_orderbook("T", raw)
+    assert ob.yes == []
+    assert ob.no == []
+
+
+def test_normalize_market_captures_mve_collection_ticker():
+    raw = _raw_market_dollars()
+    raw["mve_collection_ticker"] = "KXMVECROSSCATEGORY"
+    m = _normalize_market(raw)
+    assert m.mve_collection_ticker == "KXMVECROSSCATEGORY"
+
+
+def test_normalize_market_empty_mve_ticker_is_none():
+    raw = _raw_market_dollars()
+    raw["mve_collection_ticker"] = ""
+    m = _normalize_market(raw)
+    assert m.mve_collection_ticker is None
+
+
+async def test_get_markets_follows_cursor_pagination():
+    from unittest.mock import AsyncMock, MagicMock
+    client = MagicMock()
+    client.get = AsyncMock(side_effect=[
+        {"markets": [_raw_market_dollars() for _ in range(2)], "cursor": "next"},
+        {"markets": [_raw_market_dollars()], "cursor": None},
+    ])
+    result = await get_markets(client, limit=3)
+    assert len(result) == 3
+    assert client.get.call_count == 2
+    assert client.get.call_args_list[1][1]["params"]["cursor"] == "next"
+
+
+async def test_get_markets_stops_at_limit():
+    from unittest.mock import AsyncMock, MagicMock
+    client = MagicMock()
+    client.get = AsyncMock(return_value={"markets": [_raw_market_dollars()], "cursor": "more"})
+    result = await get_markets(client, limit=2)
+    assert len(result) == 2
+    assert client.get.call_count == 2

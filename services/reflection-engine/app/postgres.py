@@ -88,7 +88,7 @@ async def fetch_summary(analysis_id: str) -> Optional[dict]:
             SELECT analysis_id, analyzed_at, time_range_start, time_range_end,
                    predictions_analyzed, outcomes_available, accuracy,
                    average_confidence, average_execution_ms,
-                   model_breakdown, category_breakdown, observations
+                   model_breakdown, category_breakdown, observations, diagnostics
             FROM learning.learning_summaries
             WHERE analysis_id = $1
             """,
@@ -107,7 +107,7 @@ async def fetch_recent_summaries(limit: int = 10) -> list[dict]:
             SELECT analysis_id, analyzed_at, time_range_start, time_range_end,
                    predictions_analyzed, outcomes_available, accuracy,
                    average_confidence, average_execution_ms,
-                   model_breakdown, category_breakdown, observations
+                   model_breakdown, category_breakdown, observations, diagnostics
             FROM learning.learning_summaries
             ORDER BY analyzed_at DESC
             LIMIT $1

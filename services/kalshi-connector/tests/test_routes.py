@@ -43,7 +43,7 @@ def _order_dict() -> dict:
         "ticker": "T",
         "side": "yes",
         "action": "buy",
-        "quantity": 5,
+        "count": 5,
         "price": 55,
         "order_type": "limit",
         "status": "resting",
@@ -219,7 +219,7 @@ def test_post_order_returns_200(tc):
             "ticker": "T",
             "side": "yes",
             "action": "buy",
-            "quantity": 5,
+            "count": 5,
             "price": 55,
         })
     assert r.status_code == 200
@@ -234,7 +234,7 @@ def test_post_order_invalid_returns_400(tc):
             "ticker": "T",
             "side": "yes",
             "action": "buy",
-            "quantity": 5,
+            "count": 5,
             "price": 55,
         })
     assert r.status_code == 400

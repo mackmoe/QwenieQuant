@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     postgres_url: str = ""
     prompt_version: str = "1.0"
 
+    confidence_calibration_enabled: bool = True
+    confidence_min_history: int = 25
+    confidence_max_reduction: float = 0.30
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

@@ -32,6 +32,7 @@ _REQUIRED_FIELDS = (
     "predictions_analyzed", "outcomes_available",
     "accuracy", "average_confidence", "average_execution_ms",
     "model_breakdown", "category_breakdown", "observations",
+    "diagnostics",
 )
 
 
@@ -211,5 +212,52 @@ def test_empty_body_uses_defaults():
     with _mock_fetch(), _mock_persist():
         response = client.post("/analyze", json={})
     assert response.status_code == 200
+
+
+# --- diagnostics ---
+
+
+def test_diagnostics_field_is_dict():
+    with _mock_fetch(), _mock_persist():
+        response = client.post("/analyze", json={})
+    assert isinstance(response.json()["diagnostics"], dict)
+
+
+def test_diagnostics_has_category_performance():
+    with _mock_fetch(), _mock_persist():
+        response = client.post("/analyze", json={})
+    diag = response.json()["diagnostics"]
+    assert "category_performance" in diag
+    assert isinstance(diag["category_performance"], list)
+
+
+def test_diagnostics_has_yes_no_analysis():
+    with _mock_fetch(), _mock_persist():
+        response = client.post("/analyze", json={})
+    diag = response.json()["diagnostics"]
+    assert "yes_no_analysis" in diag
+
+
+def test_diagnostics_has_confidence_buckets():
+    with _mock_fetch(), _mock_persist():
+        response = client.post("/analyze", json={})
+    diag = response.json()["diagnostics"]
+    assert "confidence_buckets" in diag
+    assert len(diag["confidence_buckets"]) == 5
+
+
+def test_diagnostics_has_search_effectiveness():
+    with _mock_fetch(), _mock_persist():
+        response = client.post("/analyze", json={})
+    diag = response.json()["diagnostics"]
+    assert "search_effectiveness" in diag
+
+
+def test_diagnostics_empty_history_returns_empty_diagnostics():
+    with _mock_fetch([]), _mock_persist():
+        response = client.post("/analyze", json={})
+    diag = response.json()["diagnostics"]
+    assert diag["category_performance"] == []
+    assert diag["yes_no_analysis"] is None
 
 

@@ -3,7 +3,7 @@ import time
 
 from fastapi import APIRouter, HTTPException
 
-from app import health as health_module
+from app import calibrator, health as health_module
 from app import ollama, postgres, searxng
 from app.config import get_settings
 from app.models import PredictionRequest, PredictionResponse
@@ -27,11 +27,11 @@ async def predict(request: PredictionRequest) -> PredictionResponse:
 
     # Deterministic search decision — model is never consulted.
     evidence: list[searxng.SearchResult] = []
-    if searxng.needs_search(request.question, request.category.value):
+    if searxng.needs_search(request.question, request.category):
         logger.info(
             "question=%r category=%s search=required",
             request.question[:80],
-            request.category.value,
+            request.category,
         )
         evidence = await searxng.search(request.question)
         if not evidence:
@@ -40,7 +40,7 @@ async def predict(request: PredictionRequest) -> PredictionResponse:
         logger.info(
             "question=%r category=%s search=skipped",
             request.question[:80],
-            request.category.value,
+            request.category,
         )
 
     system_prompt, user_prompt = build_prediction_prompt(request, evidence or None)
@@ -54,11 +54,19 @@ async def predict(request: PredictionRequest) -> PredictionResponse:
 
     llm_prediction = validate_llm_response(content, request)
 
+    calibration = await calibrator.apply_calibration(
+        pool=postgres._pool,
+        model_confidence=llm_prediction.confidence,
+        category=request.category,
+        model=settings.ollama_model,
+        settings=settings,
+    )
+
     sources = [r.url for r in evidence if r.url]
     response = PredictionResponse(
         question=request.question,
         prediction=llm_prediction.prediction,
-        confidence=llm_prediction.confidence,
+        confidence=calibration.calibrated_confidence,
         reasoning=llm_prediction.reasoning,
         key_factors=llm_prediction.key_factors,
         model=settings.ollama_model,
@@ -66,6 +74,6 @@ async def predict(request: PredictionRequest) -> PredictionResponse:
         sources=sources,
     )
 
-    await postgres.persist_prediction(request, response, execution_ms)
+    await postgres.persist_prediction(request, response, execution_ms, calibration_result=calibration)
 
     return response

@@ -189,16 +189,19 @@ def _make_entry(opp: AddOpportunity, effective: float, now: datetime) -> QueueEn
 
 def expire_stale(settings: Settings) -> int:
     """
-    Transition active entries past their expiration window to EXPIRED.
+    Transition QUEUED entries past their expiration window to EXPIRED.
 
-    The buffer keeps a market in the queue until expiration_time - buffer,
-    ensuring a prediction attempt can still be made before the deadline.
+    Only QUEUED entries are eligible — IN_PROGRESS entries are mid-prediction
+    and must not be expired; doing so corrupts queue state because the
+    workflow's subsequent mark_completed() silently fails on the changed state,
+    leaving the entry stuck as EXPIRED and potentially re-queued by the next
+    OE scan, causing a duplicate prediction cycle.
     """
     now = _now()
     buffer = settings.queue_expiration_buffer_seconds
     removed = 0
     for entry in _queue:
-        if entry.queue_state not in ACTIVE_STATES:
+        if entry.queue_state != QueueState.QUEUED:
             continue
         if entry.expiration_time is None:
             continue

@@ -23,19 +23,19 @@ def _raw_position(**overrides) -> dict:
 def test_normalize_position_positive_is_yes():
     p = _normalize_position(_raw_position(position=5))
     assert p.side == "yes"
-    assert p.quantity == 5
+    assert p.count == 5
 
 
 def test_normalize_position_negative_is_no():
     p = _normalize_position(_raw_position(position=-3))
     assert p.side == "no"
-    assert p.quantity == 3
+    assert p.count == 3
 
 
 def test_normalize_position_zero_is_yes():
     p = _normalize_position(_raw_position(position=0))
     assert p.side == "yes"
-    assert p.quantity == 0
+    assert p.count == 0
 
 
 def test_normalize_position_ticker():
@@ -56,7 +56,7 @@ def test_normalize_position_market_exposure():
 
 def test_normalize_position_missing_fields():
     p = _normalize_position({"ticker": "X"})
-    assert p.quantity == 0
+    assert p.count == 0
     assert p.realized_pnl == 0
     assert p.unrealized_pnl == 0
 
