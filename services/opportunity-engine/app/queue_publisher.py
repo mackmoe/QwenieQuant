@@ -16,6 +16,27 @@ from app.models import ScoredMarket
 logger = logging.getLogger(__name__)
 
 
+def dedupe_mutually_exclusive(markets: list[ScoredMarket]) -> list[ScoredMarket]:
+    """
+    Keep only the highest-priority market per mutually exclusive event.
+
+    Markets in a mutually exclusive event are complementary outcomes of one
+    question (e.g. the two players in a match) — predicting more than one
+    spends inference answering the same question twice.  Input is assumed
+    sorted by priority (run_scoring output); first seen per event wins.
+    """
+    seen_events: set[str] = set()
+    result: list[ScoredMarket] = []
+    for m in markets:
+        event_ticker = m.metadata.get("event_ticker")
+        if event_ticker and m.metadata.get("mutually_exclusive"):
+            if event_ticker in seen_events:
+                continue
+            seen_events.add(event_ticker)
+        result.append(m)
+    return result
+
+
 def _build_payload(markets: list[ScoredMarket]) -> dict:
     opportunities = []
     for m in markets:
@@ -53,7 +74,15 @@ async def publish_opportunities(
         logger.info("No Tier 3 markets to publish")
         return 0
 
-    batch = tier3_markets[: settings.queue_publish_batch_size]
+    deduped = dedupe_mutually_exclusive(tier3_markets)
+    if len(deduped) < len(tier3_markets):
+        logger.info(
+            "Event dedupe: %d of %d markets kept (%d complementary outcomes dropped)",
+            len(deduped),
+            len(tier3_markets),
+            len(tier3_markets) - len(deduped),
+        )
+    batch = deduped[: settings.queue_publish_batch_size]
     url = settings.prediction_queue_url.rstrip("/") + "/queue/add"
     payload = _build_payload(batch)
 

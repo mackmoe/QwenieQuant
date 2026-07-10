@@ -224,3 +224,65 @@ async def test_publish_timeout_returns_zero():
     http.post = AsyncMock(side_effect=httpx.TimeoutException("Timeout"))
     result = await publish_opportunities(http, _settings(), [_make_scored("T1", 3)])
     assert result == 0
+
+
+# ---------------------------------------------------------------------------
+# dedupe_mutually_exclusive
+# ---------------------------------------------------------------------------
+
+from app.queue_publisher import dedupe_mutually_exclusive
+
+
+def _sm(ticker: str, score: float, **meta):
+    from datetime import datetime, timezone
+    return ScoredMarket(
+        market_id=ticker,
+        ticker=ticker,
+        title=ticker,
+        priority_score=score,
+        assigned_tier=3,
+        scoring_timestamp=datetime(2026, 7, 10, tzinfo=timezone.utc),
+        metadata=meta,
+    )
+
+
+def test_dedupe_keeps_highest_priority_per_exclusive_event():
+    ms = [
+        _sm("MATCH-BRO", 80.0, event_ticker="EV1", mutually_exclusive=True),
+        _sm("MATCH-MIC", 75.0, event_ticker="EV1", mutually_exclusive=True),
+    ]
+    result = dedupe_mutually_exclusive(ms)
+    assert [m.ticker for m in result] == ["MATCH-BRO"]
+
+
+def test_dedupe_keeps_markets_from_different_events():
+    ms = [
+        _sm("A-1", 80.0, event_ticker="EV1", mutually_exclusive=True),
+        _sm("B-1", 75.0, event_ticker="EV2", mutually_exclusive=True),
+    ]
+    assert len(dedupe_mutually_exclusive(ms)) == 2
+
+
+def test_dedupe_ignores_non_exclusive_events():
+    # Same event but NOT mutually exclusive (e.g. independent props) — keep both
+    ms = [
+        _sm("P-1", 80.0, event_ticker="EV1", mutually_exclusive=False),
+        _sm("P-2", 75.0, event_ticker="EV1", mutually_exclusive=False),
+    ]
+    assert len(dedupe_mutually_exclusive(ms)) == 2
+
+
+def test_dedupe_ignores_markets_without_event_ticker():
+    ms = [
+        _sm("X-1", 80.0),
+        _sm("X-2", 75.0),
+    ]
+    assert len(dedupe_mutually_exclusive(ms)) == 2
+
+
+def test_dedupe_missing_flag_treated_as_unknown_keeps_both():
+    ms = [
+        _sm("U-1", 80.0, event_ticker="EV1"),
+        _sm("U-2", 75.0, event_ticker="EV1"),
+    ]
+    assert len(dedupe_mutually_exclusive(ms)) == 2

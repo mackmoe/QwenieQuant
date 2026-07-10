@@ -855,3 +855,77 @@ class TestEvPersistenceAndDirection:
         kwargs = mock_persist.call_args.kwargs
         assert kwargs["market_price"] is None
         assert kwargs["expected_value"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests: low-confidence inversion fix (phantom edge prevention)
+# ---------------------------------------------------------------------------
+
+
+class TestNonDirectionalPredictions:
+    def test_low_confidence_no_returns_neutral_probability(self):
+        # "No" at 0.40 is ignorance, not a 60% YES signal
+        assert wf.compute_probability("No", 0.40, 0.55) == pytest.approx(0.5)
+
+    def test_low_confidence_yes_returns_neutral_probability(self):
+        assert wf.compute_probability("Yes", 0.30, 0.55) == pytest.approx(0.5)
+
+    def test_confident_no_still_inverts(self):
+        assert wf.compute_probability("No", 0.80, 0.55) == pytest.approx(0.20)
+
+    def test_confident_yes_unchanged(self):
+        assert wf.compute_probability("Yes", 0.80, 0.55) == pytest.approx(0.80)
+
+    def test_threshold_boundary_is_directional(self):
+        assert wf.compute_probability("No", 0.55, 0.55) == pytest.approx(0.45)
+
+    def test_default_threshold_zero_preserves_legacy_behavior(self):
+        assert wf.compute_probability("No", 0.40) == pytest.approx(0.60)
+
+    async def test_low_confidence_prediction_claims_zero_ev(self):
+        # The BROMIC scenario: "No" @ 0.47 vs a 9¢ market must NOT
+        # produce a +44¢ phantom edge.
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        mock_rm = AsyncMock(return_value=_risk(approved=False))
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
+                  return_value=_pred(prediction="No", confidence=0.47)),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.09),
+            patch("app.workflow._call_risk_manager", mock_rm),
+        ):
+            await wf.run_iteration(None, MagicMock(), s)
+        args = mock_rm.call_args.args
+        assert args[5] == pytest.approx(0.0)   # expected_value
+        assert args[6] == pytest.approx(0.0)   # edge
+        assert args[3] == pytest.approx(0.5)   # trade probability is neutral
+
+    async def test_low_confidence_persists_zero_ev(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        mock_persist = AsyncMock()
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
+                  return_value=_pred(prediction="No", confidence=0.40)),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.94),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock,
+                  return_value=_risk(approved=False)),
+            patch("app.workflow.postgres_module.persist_workflow_result", mock_persist),
+        ):
+            await wf.run_iteration(MagicMock(), MagicMock(), s)
+        kwargs = mock_persist.call_args.kwargs
+        assert kwargs["expected_value"] == pytest.approx(0.0)
+        assert kwargs["probability"] == pytest.approx(0.5)
+
+    async def test_confident_prediction_still_produces_ev(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        mock_rm = AsyncMock(return_value=_risk(approved=False))
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
+                  return_value=_pred(prediction="Yes", confidence=0.80)),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.60),
+            patch("app.workflow._call_risk_manager", mock_rm),
+        ):
+            await wf.run_iteration(None, MagicMock(), s)
+        assert mock_rm.call_args.args[5] == pytest.approx(0.20)

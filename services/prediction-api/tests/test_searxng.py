@@ -249,3 +249,58 @@ async def test_search_skips_results_with_no_snippet():
 
     assert len(results) == 1
     assert results[0].snippet == "This has content."
+
+
+# --- needs_search: Kalshi taxonomy (category-agnostic default) ---
+
+
+def test_needs_search_true_for_kalshi_sports():
+    assert needs_search("Will Milwaukee win?", "Sports") is True
+
+
+def test_needs_search_true_for_climate_and_weather():
+    assert needs_search("Will it rain in NYC on Friday?", "Climate and Weather") is True
+
+
+def test_needs_search_true_for_unknown_category():
+    assert needs_search("Will Sebastiano Cocola win the match?", "Exotics") is True
+
+
+def test_needs_search_stable_facts_still_excluded():
+    assert needs_search("Will the sun rise tomorrow?", "Sports") is False
+
+
+def test_needs_search_arithmetic_still_excluded():
+    assert needs_search("Is 7 x 9 more than 60?", "Financials") is False
+
+
+# --- build_search_query ---
+
+from app.searxng import build_search_query
+
+
+def test_query_player_prop_becomes_stats_search():
+    q = build_search_query("Will Freddie Freeman record 1 or more?", "Sports")
+    assert q == "Freddie Freeman stats today"
+
+
+def test_query_win_question_becomes_game_search():
+    q = build_search_query("Will Milwaukee win?", "Sports")
+    assert q == "Milwaukee game today"
+
+
+def test_query_crypto_gets_price_context():
+    q = build_search_query("Will BTC exceed $120,000 by Friday?", "Crypto")
+    assert "price today" in q
+    assert q.startswith("BTC exceed")
+
+
+def test_query_generic_gets_news_context():
+    q = build_search_query("Will the next pope be Italian?", "World")
+    assert q == "the next pope be Italian latest news"
+
+
+def test_query_strips_will_prefix_and_question_mark():
+    q = build_search_query("Will over 8.5 runs be scored?", "Sports")
+    assert not q.lower().startswith("will ")
+    assert "?" not in q

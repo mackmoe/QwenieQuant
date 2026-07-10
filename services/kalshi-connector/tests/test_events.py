@@ -83,3 +83,13 @@ async def test_get_event_unwraps_envelope():
     e = await get_event(client, "KXMLB-26JUL08MIL")
     client.get.assert_called_once_with("/events/KXMLB-26JUL08MIL")
     assert e.category == "Sports"
+
+
+def test_normalize_event_captures_mutually_exclusive():
+    e = _normalize_event(_raw_event(mutually_exclusive=True))
+    assert e.mutually_exclusive is True
+
+
+def test_normalize_event_mutually_exclusive_defaults_none():
+    e = _normalize_event({"event_ticker": "X"})
+    assert e.mutually_exclusive is None

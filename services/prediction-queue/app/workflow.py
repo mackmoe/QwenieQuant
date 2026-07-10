@@ -118,8 +118,21 @@ def _result_id() -> str:
     return f"wf_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
-def compute_probability(prediction: str, confidence: float) -> float:
-    """Convert prediction string + confidence to P(Yes)."""
+def compute_probability(
+    prediction: str,
+    confidence: float,
+    min_directional_confidence: float = 0.0,
+) -> float:
+    """
+    Convert prediction string + confidence to P(Yes).
+
+    Below min_directional_confidence the model has no real opinion, so the
+    honest P(Yes) is 0.5 — NOT the inversion of a weak guess.  Inverting a
+    40%-confident "No" into a 60% YES signal manufactured phantom edges
+    (both sides of the same match once showed +45¢ "edge" simultaneously).
+    """
+    if confidence < min_directional_confidence:
+        return 0.5
     pred = prediction.strip().lower()
     if pred in ("yes", "true", "1"):
         return confidence
@@ -315,7 +328,10 @@ async def run_iteration(
         prediction_id = prediction_data.get("prediction_id") or _result_id()
         prediction = prediction_data.get("prediction", "")
         confidence = float(prediction_data.get("confidence", 0.0))
-        probability = compute_probability(prediction, confidence)
+        directional = confidence >= settings.min_directional_confidence
+        probability = compute_probability(
+            prediction, confidence, settings.min_directional_confidence
+        )
 
         raw_title = entry.metadata.get("title", entry.ticker)
         category = entry.metadata.get("category") or _detect_category(raw_title, entry.ticker)
@@ -335,7 +351,17 @@ async def run_iteration(
         # negative (denied) and invalid ones appear positive (approved).
         market_price = await _fetch_market_price(http, settings, entry.ticker)
         side = "yes" if probability >= 0.5 else "no"
-        if market_price is not None:
+        if not directional:
+            # The model has no real opinion — claiming edge against the
+            # market from a sub-threshold guess manufactures phantom EV.
+            ev = 0.0
+            trade_probability = 0.5
+            logger.info(
+                "non_directional_prediction market_id=%s confidence=%.2f — ev=0",
+                entry.market_id,
+                confidence,
+            )
+        elif market_price is not None:
             if side == "yes":
                 ev = round(probability - market_price, 4)
                 trade_probability = probability

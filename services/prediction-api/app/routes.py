@@ -33,9 +33,13 @@ async def predict(request: PredictionRequest) -> PredictionResponse:
             request.question[:80],
             request.category,
         )
-        evidence = await searxng.search(request.question)
+        query = searxng.build_search_query(request.question, request.category)
+        evidence = await searxng.search(query)
         if not evidence:
-            logger.info("search returned no results — continuing without evidence")
+            logger.info(
+                "search returned no results for query=%r — continuing without evidence",
+                query[:80],
+            )
     else:
         logger.info(
             "question=%r category=%s search=skipped",

@@ -104,13 +104,52 @@ def needs_search(question: str, category: str) -> bool:
         if kw in q:
             return True
 
-    # Category defaults: all four platform categories concern time-sensitive outcomes.
-    # weather → forecast, not historical; sports → game outcomes; politics → elections;
-    # finance → market prices.
-    if category in ("weather", "sports", "politics", "finance"):
-        return True
+    # Default: search.  Every prediction concerns a real-world future
+    # outcome, which is time-sensitive by nature.  Category-agnostic on
+    # purpose — Kalshi's taxonomy is open ("Sports", "Climate and Weather",
+    # "Science and Technology", ...) and a hardcoded category list here
+    # silently disabled search when the platform adopted Kalshi's names.
+    return True
 
-    return False
+
+# ---------------------------------------------------------------------------
+# Search query construction
+# ---------------------------------------------------------------------------
+
+# "Will Freddie Freeman record 1 or more?" → player prop
+_PROP_RE = re.compile(r"^(?:will\s+)?(.+?)\s+record\s+[\d.]+\s+or more", re.IGNORECASE)
+# "Will Milwaukee win?" / "Will X win the Y?" → competition outcome
+_WIN_RE = re.compile(r"^(?:will\s+)?(.+?)\s+win\b", re.IGNORECASE)
+
+_MARKET_CATEGORIES = ("crypto", "financ", "commodit", "econom")
+
+
+def build_search_query(question: str, category: str) -> str:
+    """
+    Turn a prediction question into an effective web-search query.
+
+    Raw questions make poor queries ("Will Milwaukee win?" retrieves
+    nothing useful); the query needs the entity plus recency context.
+    """
+    q = question.strip().rstrip("?").strip()
+    cat = (category or "").lower()
+
+    m = _PROP_RE.match(q)
+    if m:
+        return f"{m.group(1)} stats today"
+
+    m = _WIN_RE.match(q)
+    if m:
+        return f"{m.group(1)} game today"
+
+    if q.lower().startswith("will "):
+        q = q[5:]
+
+    if any(term in cat for term in _MARKET_CATEGORIES):
+        return f"{q} price today"
+    if "sport" in cat:
+        return f"{q} today"
+    return f"{q} latest news"
 
 
 # ---------------------------------------------------------------------------

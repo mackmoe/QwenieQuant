@@ -263,6 +263,8 @@ def score_all(
                     factors["category"] = event["category"]
                 if event.get("series_ticker"):
                     factors["series_ticker"] = event["series_ticker"]
+                if event.get("mutually_exclusive") is not None:
+                    factors["mutually_exclusive"] = event["mutually_exclusive"]
         results.append(
             ScoredMarket(
                 market_id=ticker,

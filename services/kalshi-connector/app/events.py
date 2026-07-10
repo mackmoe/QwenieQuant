@@ -18,6 +18,9 @@ class Event(BaseModel):
     series_ticker: Optional[str] = None
     category: Optional[str] = None
     title: Optional[str] = None
+    # True when the event's markets are mutually exclusive outcomes
+    # (e.g. two players in one match) — only one can settle YES.
+    mutually_exclusive: Optional[bool] = None
 
 
 def _normalize_event(raw: dict) -> Event:
@@ -26,6 +29,7 @@ def _normalize_event(raw: dict) -> Event:
         series_ticker=raw.get("series_ticker"),
         category=raw.get("category"),
         title=raw.get("title"),
+        mutually_exclusive=raw.get("mutually_exclusive"),
     )
 
 
