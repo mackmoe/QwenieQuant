@@ -575,3 +575,84 @@ def test_format_run_skipped_mentions_no_retry():
         "dry_run": True,
     })
     assert "not be retried" in result or "skipped" in result.lower()
+
+
+# --- format_hot (Market Interest views) ---
+
+from app.formatter import format_hot
+
+_VIEWS_FULL = {
+    "most_active": [
+        {"ticker": "KXMLB-A", "title": "Brewers win", "category": "Sports",
+         "priority_score": 62.0, "volume_delta": 1200, "price_delta": 2.0,
+         "open_interest": 5000, "spread": 2, "rank": 1, "rank_delta": 4},
+    ],
+    "fastest_rising": [
+        {"ticker": "KXBTC-B", "title": "BTC above 120k", "category": "Crypto",
+         "priority_score": 55.0, "volume_delta": 300, "price_delta": 7.5,
+         "open_interest": 900, "spread": 3, "rank": 5, "rank_delta": -1},
+    ],
+    "highest_liquidity": [
+        {"ticker": "KXFED-C", "title": "Fed cuts rates", "category": "Economics",
+         "priority_score": 48.0, "volume_delta": 10, "price_delta": 0.5,
+         "open_interest": 22000, "spread": 1, "rank": 9, "rank_delta": None},
+    ],
+    "highest_opportunity": [
+        {"ticker": "KXMLB-A", "title": "Brewers win", "category": "Sports",
+         "priority_score": 62.0, "volume_delta": 1200, "price_delta": 2.0,
+         "open_interest": 5000, "spread": 2, "rank": 1, "rank_delta": 4},
+    ],
+    "scored_at": "2026-07-08T18:00:00+00:00",
+}
+
+
+def test_format_hot_shows_all_four_sections():
+    result = format_hot(_VIEWS_FULL)
+    for header in ("Most Active", "Fastest Rising", "Highest Liquidity", "Highest Opportunity"):
+        assert header in result, f"Missing: {header}"
+
+
+def test_format_hot_shows_volume_delta():
+    result = format_hot(_VIEWS_FULL)
+    assert "+1,200 contracts" in result
+
+
+def test_format_hot_shows_price_delta():
+    result = format_hot(_VIEWS_FULL)
+    assert "+7.5¢" in result
+
+
+def test_format_hot_shows_open_interest_and_spread():
+    result = format_hot(_VIEWS_FULL)
+    assert "22,000 open interest" in result
+    assert "1¢ spread" in result
+
+
+def test_format_hot_shows_rank_climb():
+    result = format_hot(_VIEWS_FULL)
+    assert "▲4 rank" in result
+
+
+def test_format_hot_shows_category():
+    result = format_hot(_VIEWS_FULL)
+    assert "Sports" in result
+    assert "Crypto" in result
+
+
+def test_format_hot_empty_views_explains_need_for_scans():
+    result = format_hot({"most_active": [], "fastest_rising": [],
+                         "highest_liquidity": [], "highest_opportunity": [],
+                         "scored_at": None})
+    assert "two scans" in result
+
+
+def test_format_hot_error():
+    result = format_hot({"error": "connection refused"})
+    assert "❌" in result
+
+
+def test_format_hot_within_discord_limit():
+    big = {k: v * 25 for k, v in _VIEWS_FULL.items() if isinstance(v, list)}
+    big["scored_at"] = None
+    result = format_hot(big)
+    assert len(result) <= 2000

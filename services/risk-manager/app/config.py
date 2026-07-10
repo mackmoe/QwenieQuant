@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     min_confidence: float = 0.60
     min_expected_value: float = 0.01
     min_edge: float = 0.05
+    # YES predictions require higher confidence: resolved data shows the
+    # model's mid-confidence YES calls run well below 50% accuracy while
+    # NO calls at the same confidence hold up (residual YES bias).
+    min_yes_confidence: float = 0.70
     max_position_percent: float = 5.0   # percent of account balance per trade
     max_open_positions: int = 10
     max_daily_loss: int = 1_000         # cents ($10.00)

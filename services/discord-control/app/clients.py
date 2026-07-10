@@ -79,6 +79,10 @@ class OpportunityClient(ServiceClient):
     async def get_opportunities(self, limit: int = 10) -> dict:
         return await self._get(f"/opportunities?limit={limit}")
 
+    async def get_views(self, limit: int = 3) -> dict:
+        """Market Interest views: most active, fastest rising, liquidity, top MIS."""
+        return await self._get(f"/views?limit={limit}")
+
     async def refresh(self) -> dict:
         return await self._post("/refresh", {})
 

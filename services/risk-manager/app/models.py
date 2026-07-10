@@ -11,6 +11,9 @@ class EvaluationRequest(BaseModel):
     edge: float
     market_ticker: str
     market_category: str = "Financials"
+    # Model's predicted direction ("yes"/"no").  Optional for backward
+    # compatibility; when omitted the direction-bias check passes.
+    prediction_direction: Optional[str] = None
 
     @field_validator("probability", "confidence")
     @classmethod
@@ -28,6 +31,7 @@ class RiskChecks(BaseModel):
     daily_loss: bool = True
     bankroll: bool = True
     consecutive_losses: bool = True
+    direction_bias: bool = True
 
 
 class EvaluationResponse(BaseModel):

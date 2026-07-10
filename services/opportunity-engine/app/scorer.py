@@ -48,6 +48,33 @@ def _time_score(days: Optional[float]) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Ingest gate
+# ---------------------------------------------------------------------------
+
+
+def apply_ingest_gate(markets: list[dict], settings: Settings) -> list[dict]:
+    """
+    Drop dead markets before any scoring, persistence, or snapshotting.
+
+    Most listed markets have zero volume and no two-sided book; discarding
+    them here is the platform's largest compute/persistence saving.
+    """
+    gated: list[dict] = []
+    for m in markets:
+        if m.get("status") not in ("active", "open"):
+            continue
+        if m.get("mve_collection_ticker"):
+            continue
+        if (m.get("volume") or 0) < settings.ingest_min_volume:
+            continue
+        if settings.ingest_require_quote:
+            if not (m.get("yes_bid") and m.get("yes_ask")):
+                continue
+        gated.append(m)
+    return gated
+
+
+# ---------------------------------------------------------------------------
 # Single-market scoring
 # ---------------------------------------------------------------------------
 
@@ -56,6 +83,8 @@ def score_market(
     market: dict,
     now: datetime,
     settings: Settings,
+    momentum: Optional[dict] = None,
+    series_performance: Optional[dict] = None,
 ) -> tuple[float, dict]:
     """
     Return (priority_score, factors) for one market.
@@ -130,6 +159,29 @@ def score_market(
     activity_f = 1.0 if (yes_bid > 0 and yes_ask > 0) else 0.0
     factors["activity_score"] = activity_f
 
+    # ── Momentum (Market Interest Score components) ───────────────────────
+    # Deltas vs the previous scan's snapshot; zero on first sighting so the
+    # score degrades gracefully to state-only.
+    momentum = momentum or {}
+    volume_mom = momentum.get("volume_momentum", 0.0)
+    price_mom = momentum.get("price_momentum", 0.0)
+    liquidity_mom = momentum.get("liquidity_momentum", 0.0)
+    for key in ("volume_delta", "price_delta", "spread_delta", "liquidity_delta",
+                "volume_momentum", "price_momentum", "liquidity_momentum"):
+        if key in momentum:
+            factors[key] = momentum[key]
+
+    # ── Series performance (learning feedback) ────────────────────────────
+    # Resolved prediction accuracy for this market's series over a trailing
+    # window.  0.5 is neutral (unknown or thin history); proven-bad series
+    # sink, proven-good rise.
+    if series_performance and series_performance.get("accuracy") is not None:
+        series_f = min(max(series_performance["accuracy"], 0.0), 1.0)
+        factors["series_accuracy"] = round(series_f, 4)
+        factors["series_resolved"] = series_performance.get("resolved")
+    else:
+        series_f = 0.5
+
     # ── Weighted sum, normalized so score ∈ [0, 100] ─────────────────────
     weight_total = (
         settings.weight_time
@@ -137,6 +189,10 @@ def score_market(
         + settings.weight_spread
         + settings.weight_liquidity
         + settings.weight_activity
+        + settings.weight_volume_momentum
+        + settings.weight_price_momentum
+        + settings.weight_liquidity_momentum
+        + settings.weight_series_performance
     )
     if weight_total <= 0:
         return 0.0, factors
@@ -147,6 +203,10 @@ def score_market(
         + settings.weight_spread * spread_f
         + settings.weight_liquidity * liquidity_f
         + settings.weight_activity * activity_f
+        + settings.weight_volume_momentum * volume_mom
+        + settings.weight_price_momentum * price_mom
+        + settings.weight_liquidity_momentum * liquidity_mom
+        + settings.weight_series_performance * series_f
     )
     score = (raw / weight_total) * 100.0
     factors["raw_weighted"] = round(raw, 4)
@@ -164,6 +224,8 @@ def score_all(
     now: datetime,
     settings: Settings,
     events_by_ticker: Optional[dict] = None,
+    momentum_by_ticker: Optional[dict] = None,
+    series_performance: Optional[dict] = None,
 ) -> list[ScoredMarket]:
     """
     Score every market and return unsorted ScoredMarket objects.
@@ -171,14 +233,27 @@ def score_all(
     events_by_ticker maps event_ticker → event dict; when provided, each
     market's metadata gains Kalshi's category / series_ticker / event_ticker
     (hierarchy: Category → Series → Event → Market).
+
+    momentum_by_ticker maps market ticker → momentum factor dict (deltas vs
+    the previous scan snapshot); when provided, momentum feeds the score.
+
+    series_performance maps series prefix (ticker before first '-') →
+    {"resolved", "accuracy"}; when provided, learning feedback feeds the score.
     """
     events_by_ticker = events_by_ticker or {}
+    momentum_by_ticker = momentum_by_ticker or {}
+    series_performance = series_performance or {}
     results: list[ScoredMarket] = []
     for m in markets:
         ticker = m.get("ticker", "")
         if not ticker:
             continue
-        score, factors = score_market(m, now, settings)
+        series = ticker.split("-", 1)[0]
+        score, factors = score_market(
+            m, now, settings,
+            momentum=momentum_by_ticker.get(ticker),
+            series_performance=series_performance.get(series),
+        )
         event_ticker = m.get("event_ticker")
         if event_ticker:
             factors["event_ticker"] = event_ticker
@@ -259,11 +334,18 @@ def run_scoring(
     settings: Settings,
     now: Optional[datetime] = None,
     events_by_ticker: Optional[dict] = None,
+    momentum_by_ticker: Optional[dict] = None,
+    series_performance: Optional[dict] = None,
 ) -> list[ScoredMarket]:
     """Score all markets and assign tiers. Returns sorted list."""
     if now is None:
         now = datetime.now(timezone.utc)
-    scored = score_all(markets, now, settings, events_by_ticker=events_by_ticker)
+    scored = score_all(
+        markets, now, settings,
+        events_by_ticker=events_by_ticker,
+        momentum_by_ticker=momentum_by_ticker,
+        series_performance=series_performance,
+    )
     return assign_tiers(
         scored,
         min_priority_score=settings.min_priority_score,

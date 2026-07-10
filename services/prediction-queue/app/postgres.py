@@ -94,6 +94,10 @@ CREATE TABLE IF NOT EXISTS queue.workflow_results (
     prediction          TEXT,
     confidence          DOUBLE PRECISION,
     probability         DOUBLE PRECISION,
+    market_price        DOUBLE PRECISION,
+    expected_value      DOUBLE PRECISION,
+    edge                DOUBLE PRECISION,
+    side                TEXT,
     approved            BOOLEAN,
     risk_reason         TEXT,
     trade_status        TEXT NOT NULL,
@@ -103,14 +107,21 @@ CREATE TABLE IF NOT EXISTS queue.workflow_results (
     duration_ms         INTEGER,
     metadata            JSONB NOT NULL DEFAULT '{}'
 );
+
+ALTER TABLE queue.workflow_results ADD COLUMN IF NOT EXISTS market_price DOUBLE PRECISION;
+ALTER TABLE queue.workflow_results ADD COLUMN IF NOT EXISTS expected_value DOUBLE PRECISION;
+ALTER TABLE queue.workflow_results ADD COLUMN IF NOT EXISTS edge DOUBLE PRECISION;
+ALTER TABLE queue.workflow_results ADD COLUMN IF NOT EXISTS side TEXT;
 """
 
 _INSERT_WORKFLOW_RESULT = """
 INSERT INTO queue.workflow_results
     (result_id, queue_id, market_id, ticker, prediction_id, prediction,
-     confidence, probability, approved, risk_reason, trade_status, dry_run,
+     confidence, probability, market_price, expected_value, edge, side,
+     approved, risk_reason, trade_status, dry_run,
      order_id, executed_at, duration_ms, metadata)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+        $17, $18, $19, $20::jsonb)
 ON CONFLICT (result_id) DO NOTHING;
 """
 
@@ -126,6 +137,10 @@ async def persist_workflow_result(
     prediction: str | None,
     confidence: float | None,
     probability: float | None,
+    market_price: float | None,
+    expected_value: float | None,
+    edge: float | None,
+    side: str | None,
     approved: bool | None,
     risk_reason: str | None,
     trade_status: str,
@@ -147,6 +162,10 @@ async def persist_workflow_result(
             prediction,
             confidence,
             probability,
+            market_price,
+            expected_value,
+            edge,
+            side,
             approved,
             risk_reason,
             trade_status,

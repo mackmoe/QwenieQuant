@@ -19,12 +19,15 @@ Category          Sports
 ```
 
 - **Category** — high-level discovery grouping (per Kalshi's glossary). A series
-  belongs to exactly one category. Values observed live in the API: Sports,
-  Climate and Weather, Entertainment, Commodities, Mentions, Elections, Politics,
-  Crypto, Financials, Economics, Tech & Science, World, Exotics. Note the API
-  strings differ from the website navigation in places ("Climate and Weather" vs
-  "Climate"), and Kalshi adds categories without notice — so the platform stores
-  category as an open string, never a closed enum.
+  belongs to exactly one category. Full set verified against live /events data
+  (July 2026): Sports, Elections, Entertainment, Politics, Economics, Financials,
+  Climate and Weather, Science and Technology, Crypto, Companies, Commodities,
+  Mentions, Social, World, Health, Transportation (+ "Exotics" seen on MVE
+  markets). The API strings differ from the website navigation ("Science and
+  Technology" vs the site's "science" URL; "Entertainment" vs "Culture";
+  "Climate and Weather" vs "Climate"), and Kalshi adds categories without
+  notice — so the platform stores category as an open string, never a closed
+  enum, and scans ALL categories with no filter.
 - **Subcategory** — narrower discovery grouping; a series can belong to several.
 - The platform resolves a market's category via its event: the Opportunity Engine
   fetches open events (`GET /events`), joins on `event_ticker`, and carries

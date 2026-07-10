@@ -786,3 +786,72 @@ class TestMultiOutcomeSkip:
         result = await wf.run_iteration(None, MagicMock(), s)
         assert result is not None
         assert result["status"] == "skipped"
+
+
+# ---------------------------------------------------------------------------
+# Tests: EV/price persistence and direction guard pass-through
+# ---------------------------------------------------------------------------
+
+
+class TestEvPersistenceAndDirection:
+    async def test_risk_manager_receives_yes_direction(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        mock_rm = AsyncMock(return_value=_risk(approved=False))
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
+                  return_value=_pred(prediction="Yes", confidence=0.65)),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", mock_rm),
+        ):
+            await wf.run_iteration(None, MagicMock(), s)
+        assert mock_rm.call_args.kwargs["prediction_direction"] == "yes"
+
+    async def test_risk_manager_receives_no_direction(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        mock_rm = AsyncMock(return_value=_risk(approved=False))
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
+                  return_value=_pred(prediction="No", confidence=0.80)),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", mock_rm),
+        ):
+            await wf.run_iteration(None, MagicMock(), s)
+        assert mock_rm.call_args.kwargs["prediction_direction"] == "no"
+
+    async def test_persist_receives_market_price_ev_and_side(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        mock_persist = AsyncMock()
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
+                  return_value=_pred(prediction="Yes", confidence=0.80)),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.60),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock,
+                  return_value=_risk(approved=False)),
+            patch("app.workflow.postgres_module.persist_workflow_result", mock_persist),
+        ):
+            await wf.run_iteration(MagicMock(), MagicMock(), s)
+        kwargs = mock_persist.call_args.kwargs
+        assert kwargs["market_price"] == pytest.approx(0.60)
+        # Yes @ 0.80 conf vs 0.60 market → EV = 0.80 - 0.60 = 0.20
+        assert kwargs["expected_value"] == pytest.approx(0.20)
+        assert kwargs["edge"] == pytest.approx(0.20)
+        assert kwargs["side"] == "yes"
+
+    async def test_persist_receives_none_price_when_unavailable(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-1", 80.0)], s)
+        mock_persist = AsyncMock()
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=None),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock,
+                  return_value=_risk(approved=False)),
+            patch("app.workflow.postgres_module.persist_workflow_result", mock_persist),
+        ):
+            await wf.run_iteration(MagicMock(), MagicMock(), s)
+        kwargs = mock_persist.call_args.kwargs
+        assert kwargs["market_price"] is None
+        assert kwargs["expected_value"] == pytest.approx(0.0)

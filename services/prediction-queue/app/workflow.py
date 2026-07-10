@@ -185,6 +185,7 @@ async def _call_risk_manager(
     edge: float,
     ticker: str,
     category: str,
+    prediction_direction: str | None = None,
 ) -> dict:
     resp = await http.post(
         f"{settings.risk_manager_url}/evaluate",
@@ -196,6 +197,7 @@ async def _call_risk_manager(
             "edge": round(edge, 4),
             "market_ticker": ticker,
             "market_category": category,
+            "prediction_direction": prediction_direction,
         },
         timeout=30.0,
     )
@@ -354,10 +356,14 @@ async def run_iteration(
         # Step 3 — evaluate risk
         logger.info("risk_evaluation_started market_id=%s", entry.market_id)
         try:
+            prediction_direction = (
+                "yes" if prediction.strip().lower() in ("yes", "true", "1") else "no"
+            )
             risk_data = await _call_risk_manager(
                 http, settings,
                 prediction_id, trade_probability, confidence, ev, ev,
                 entry.ticker, category,
+                prediction_direction=prediction_direction,
             )
         except Exception as exc:
             logger.warning(
@@ -428,6 +434,10 @@ async def run_iteration(
                     prediction=prediction,
                     confidence=confidence,
                     probability=probability,
+                    market_price=market_price,
+                    expected_value=ev,
+                    edge=ev,
+                    side=side,
                     approved=approved,
                     risk_reason=risk_reason,
                     trade_status=trade_status,

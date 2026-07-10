@@ -16,7 +16,8 @@ import httpx
 from app.config import Settings
 from app.kalshi_client import KalshiConnectorClient
 from app.models import ScoredMarket
-from app.scorer import run_scoring
+from app.momentum import compute_momentum_factors
+from app.scorer import apply_ingest_gate, run_scoring
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,15 @@ async def run_scan(
     client = KalshiConnectorClient(settings.kalshi_connector_url, http)
     raw_markets = await client.get_markets(limit=settings.kalshi_market_limit)
 
+    # Ingest gate: discard dead markets before scoring/persisting anything.
+    gated = apply_ingest_gate(raw_markets, settings)
+    logger.info(
+        "Ingest gate: %d of %d markets passed (%.0f%% dropped)",
+        len(gated),
+        len(raw_markets),
+        100.0 * (1 - len(gated) / len(raw_markets)) if raw_markets else 0.0,
+    )
+
     # Events carry Kalshi's category + series_ticker for each market
     # (hierarchy: Category → Series → Event → Market).
     raw_events = await client.get_events()
@@ -76,10 +86,50 @@ async def run_scan(
         e["event_ticker"]: e for e in raw_events if e.get("event_ticker")
     }
 
+    # Momentum: deltas vs the previous scan's snapshots.
+    previous_snapshots: dict = {}
+    series_performance: dict = {}
+    if pool is not None:
+        from app.postgres import fetch_latest_snapshots, fetch_series_performance
+        previous_snapshots = await fetch_latest_snapshots(pool)
+        # Learning feedback: resolved accuracy per series (trailing window)
+        series_performance = await fetch_series_performance(
+            pool,
+            min_resolved=settings.series_perf_min_resolved,
+            window_days=settings.series_perf_window_days,
+        )
+        if series_performance:
+            logger.info(
+                "Series feedback loaded: %d series with resolved history",
+                len(series_performance),
+            )
+    momentum_by_ticker = {
+        m["ticker"]: compute_momentum_factors(
+            m, previous_snapshots.get(m["ticker"]), settings
+        )
+        for m in gated
+        if m.get("ticker")
+    }
+
     now = datetime.now(timezone.utc)
     tiered = run_scoring(
-        raw_markets, settings, now=now, events_by_ticker=events_by_ticker
+        gated, settings, now=now,
+        events_by_ticker=events_by_ticker,
+        momentum_by_ticker=momentum_by_ticker,
+        series_performance=series_performance,
     )
+
+    # Ranks + rank deltas (run_scoring returns the list sorted by priority).
+    raw_by_ticker = {m.get("ticker"): m for m in gated}
+    for rank, sm in enumerate(tiered, start=1):
+        sm.metadata["rank"] = rank
+        prev = previous_snapshots.get(sm.ticker)
+        prev_rank = prev.get("rank") if prev else None
+        # Positive = climbed the board since the last scan.
+        sm.metadata["rank_delta"] = (prev_rank - rank) if prev_rank else None
+        raw = raw_by_ticker.get(sm.ticker) or {}
+        sm.metadata["yes_bid"] = raw.get("yes_bid")
+        sm.metadata["yes_ask"] = raw.get("yes_ask")
 
     duration_ms = int((time.monotonic() - t0) * 1000)
 
@@ -97,8 +147,16 @@ async def run_scan(
     _scored_markets = tiered
 
     if pool is not None:
-        from app.postgres import upsert_scores
+        from app.postgres import (
+            insert_snapshots,
+            prune_scores,
+            prune_snapshots,
+            upsert_scores,
+        )
         await upsert_scores(pool, tiered)
+        await insert_snapshots(pool, tiered, now)
+        await prune_snapshots(pool, settings.snapshot_retention_days)
+        await prune_scores(pool, settings.score_retention_days)
 
     tier3 = [m for m in tiered if m.assigned_tier == 3]
     from app.queue_publisher import publish_opportunities

@@ -38,7 +38,6 @@ def _settings(**overrides) -> Settings:
         kalshi_market_limit=100,
         postgres_url="",
         http_timeout=5.0,
-        supported_categories="weather,sports",
     )
     defaults.update(overrides)
     return Settings(**defaults)

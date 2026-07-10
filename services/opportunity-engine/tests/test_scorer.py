@@ -9,6 +9,7 @@ import pytest
 
 from app.config import Settings
 from app.scorer import (
+    apply_ingest_gate,
     _time_score,
     assign_tiers,
     run_scoring,
@@ -41,7 +42,6 @@ def _settings(**overrides) -> Settings:
         kalshi_market_limit=1000,
         postgres_url="",
         http_timeout=30.0,
-        supported_categories="weather,sports,politics,finance",
     )
     defaults.update(overrides)
     return Settings(**defaults)
@@ -414,3 +414,139 @@ def test_non_mve_market_scores_normally():
     m = {**_market(), "mve_collection_ticker": None}
     score, _ = score_market(m, _now(), _settings())
     assert score > 0.0
+
+
+# ---------------------------------------------------------------------------
+# apply_ingest_gate
+# ---------------------------------------------------------------------------
+
+
+def test_gate_drops_zero_volume_markets():
+    ms = [{**_market(), "volume": 0}, {**_market(), "volume": 100}]
+    gated = apply_ingest_gate(ms, _settings())
+    assert len(gated) == 1
+    assert gated[0]["volume"] == 100
+
+
+def test_gate_drops_one_sided_book():
+    ms = [{**_market(), "yes_bid": None}, _market()]
+    gated = apply_ingest_gate(ms, _settings())
+    assert len(gated) == 1
+
+
+def test_gate_drops_inactive_and_mve():
+    ms = [
+        {**_market(), "status": "closed"},
+        {**_market(), "mve_collection_ticker": "KXMVE"},
+        _market(),
+    ]
+    gated = apply_ingest_gate(ms, _settings())
+    assert len(gated) == 1
+
+
+def test_gate_quote_requirement_can_be_disabled():
+    ms = [{**_market(), "yes_bid": None}]
+    gated = apply_ingest_gate(ms, _settings(ingest_require_quote=False))
+    assert len(gated) == 1
+
+
+# ---------------------------------------------------------------------------
+# Momentum in the Market Interest Score
+# ---------------------------------------------------------------------------
+
+
+def test_momentum_raises_score():
+    m = _market()
+    base, _ = score_market(m, _now(), _settings())
+    boosted, factors = score_market(
+        m, _now(), _settings(),
+        momentum={"volume_momentum": 1.0, "price_momentum": 1.0,
+                  "liquidity_momentum": 1.0, "volume_delta": 600},
+    )
+    assert boosted > base
+    assert factors["volume_delta"] == 600
+
+
+def test_no_momentum_degrades_to_state_only():
+    m = _market()
+    a, _ = score_market(m, _now(), _settings())
+    b, _ = score_market(m, _now(), _settings(), momentum=None)
+    assert a == b
+
+
+def test_score_all_passes_momentum_by_ticker():
+    ms = [{**_market(), "ticker": "T1"}, {**_market(), "ticker": "T2"}]
+    momentum = {"T1": {"volume_momentum": 1.0, "price_momentum": 1.0, "liquidity_momentum": 1.0}}
+    result = score_all(ms, _now(), _settings(), momentum_by_ticker=momentum)
+    by_ticker = {m.ticker: m for m in result}
+    assert by_ticker["T1"].priority_score > by_ticker["T2"].priority_score
+
+
+# ---------------------------------------------------------------------------
+# Series-performance feedback (learning loop → scoring)
+# ---------------------------------------------------------------------------
+
+
+def test_series_accuracy_raises_score_above_neutral():
+    m = _market()
+    neutral, _ = score_market(m, _now(), _settings())
+    boosted, factors = score_market(
+        m, _now(), _settings(),
+        series_performance={"resolved": 45, "accuracy": 0.64},
+    )
+    assert boosted > neutral
+    assert factors["series_accuracy"] == 0.64
+    assert factors["series_resolved"] == 45
+
+
+def test_series_accuracy_sinks_score_below_neutral():
+    m = _market()
+    neutral, _ = score_market(m, _now(), _settings())
+    sunk, _ = score_market(
+        m, _now(), _settings(),
+        series_performance={"resolved": 120, "accuracy": 0.38},
+    )
+    assert sunk < neutral
+
+
+def test_unknown_series_is_neutral():
+    m = _market()
+    a, factors = score_market(m, _now(), _settings(), series_performance=None)
+    b, _ = score_market(m, _now(), _settings())
+    assert a == b
+    assert "series_accuracy" not in factors
+
+
+def test_score_all_joins_series_by_ticker_prefix():
+    ms = [
+        {**_market(), "ticker": "KXMLBKS-26JUL10-X"},
+        {**_market(), "ticker": "KXMLBHR-26JUL10-Y"},
+    ]
+    perf = {
+        "KXMLBKS": {"resolved": 45, "accuracy": 0.64},
+        "KXMLBHR": {"resolved": 120, "accuracy": 0.38},
+    }
+    result = score_all(ms, _now(), _settings(), series_performance=perf)
+    by_ticker = {m.ticker: m for m in result}
+    assert (by_ticker["KXMLBKS-26JUL10-X"].priority_score
+            > by_ticker["KXMLBHR-26JUL10-Y"].priority_score)
+    assert by_ticker["KXMLBKS-26JUL10-X"].metadata["series_accuracy"] == 0.64
+
+
+def test_series_feedback_shifts_tier_assignment():
+    # Two identical markets; only series history differs.  With a tier-3
+    # capacity of 1, the proven series must win the slot.
+    ms = [
+        {**_market(), "ticker": "KXBAD-1"},
+        {**_market(), "ticker": "KXGOOD-1"},
+    ]
+    perf = {
+        "KXBAD": {"resolved": 100, "accuracy": 0.35},
+        "KXGOOD": {"resolved": 100, "accuracy": 0.70},
+    }
+    tiered = run_scoring(
+        ms, _settings(max_tier3_markets=1), now=_now(), series_performance=perf
+    )
+    tier3 = [m for m in tiered if m.assigned_tier == 3]
+    assert len(tier3) == 1
+    assert tier3[0].ticker == "KXGOOD-1"

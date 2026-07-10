@@ -837,6 +837,65 @@ def _truncate(s: str, n: int) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def format_hot(views: dict) -> str:
+    """
+    Render the Market Interest views from the Opportunity Engine's /views:
+    🔥 most active, 📈 fastest rising, 💧 highest liquidity, ⭐ top MIS.
+    """
+    if "error" in views:
+        return "❌ Opportunity Engine is currently unavailable."
+
+    def _line(m: dict, stat: str) -> str:
+        title = _truncate(m.get("title") or m.get("ticker", "—"), 45)
+        cat = m.get("category")
+        cat_str = f" · {cat}" if cat else ""
+        return f"• {title}{cat_str}\n  {stat}"
+
+    sections: list[str] = ["**Market Interest** *(latest scan)*"]
+
+    active = views.get("most_active", [])
+    if active:
+        sections.append("\n🔥 **Most Active** *(volume gained this scan)*")
+        for m in active:
+            sections.append(_line(m, f"+{m.get('volume_delta', 0):,} contracts"))
+
+    rising = views.get("fastest_rising", [])
+    if rising:
+        sections.append("\n📈 **Fastest Rising** *(mid-price climb)*")
+        for m in rising:
+            delta = m.get("price_delta") or 0
+            sections.append(_line(m, f"+{delta:.1f}¢ mid price"))
+
+    liquid = views.get("highest_liquidity", [])
+    if liquid:
+        sections.append("\n💧 **Highest Liquidity**")
+        for m in liquid:
+            oi = m.get("open_interest") or 0
+            spread = m.get("spread")
+            spread_str = f" · {spread}¢ spread" if spread is not None else ""
+            sections.append(_line(m, f"{oi:,} open interest{spread_str}"))
+
+    top = views.get("highest_opportunity", [])
+    if top:
+        sections.append("\n⭐ **Highest Opportunity** *(Market Interest Score)*")
+        for m in top:
+            score = m.get("priority_score", 0)
+            rank_delta = m.get("rank_delta")
+            move = ""
+            if rank_delta is not None and rank_delta != 0:
+                arrow = "▲" if rank_delta > 0 else "▼"
+                move = f" · {arrow}{abs(rank_delta)} rank"
+            sections.append(_line(m, f"MIS {score:.1f}{move}"))
+
+    if len(sections) == 1:
+        sections.append("\n*No momentum data yet — needs at least two scans.*")
+
+    result = "\n".join(sections)
+    if len(result) > _DISCORD_MSG_LIMIT:
+        result = result[: _DISCORD_MSG_LIMIT - 3] + "..."
+    return result
+
+
 def format_markets(response: dict, category: str | None = None) -> str:
     if "error" in response:
         return "❌ Opportunity Engine is currently unavailable."

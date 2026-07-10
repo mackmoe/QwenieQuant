@@ -11,13 +11,16 @@ def _make_prediction_id() -> str:
     return f"pred_{ts}_{suffix}"
 
 
-# Kalshi's category taxonomy (hierarchy: Category → Series → Event → Market).
-# Stored as a free string because Kalshi adds categories without notice
-# (e.g. "Exotics" appears in the API but not on their browse pages).
+# Kalshi's category taxonomy (hierarchy: Category → Series → Event → Market),
+# as verified against live /events data (July 2026). Informational only —
+# category stays a free string because Kalshi adds categories without notice,
+# and the API strings differ from the website ("Science and Technology" vs
+# the site's "science" URL; "Entertainment" vs "Culture").
 KALSHI_CATEGORIES = frozenset({
-    "Elections", "Politics", "Sports", "Culture", "Crypto", "Commodities",
-    "Climate", "Economics", "Mentions", "Financials", "Finance",
-    "Tech & Science", "Exotics",
+    "Sports", "Elections", "Entertainment", "Politics", "Economics",
+    "Financials", "Climate and Weather", "Science and Technology", "Crypto",
+    "Companies", "Commodities", "Mentions", "Social", "World", "Health",
+    "Transportation", "Exotics",
 })
 
 

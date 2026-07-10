@@ -22,6 +22,7 @@ from app.commands import (
     handle_activity,
     handle_analyze,
     handle_brief,
+    handle_hot,
     handle_markets,
     handle_performance,
     handle_predict,
@@ -90,13 +91,21 @@ def create_bot(
     )
     @app_commands.describe(
         question="The prediction question (10–500 characters).",
-        category="Prediction category (default: finance).",
+        category="Kalshi category (default: Financials).",
     )
     @app_commands.choices(category=[
-        app_commands.Choice(name="Finance", value="finance"),
-        app_commands.Choice(name="Politics", value="politics"),
-        app_commands.Choice(name="Sports", value="sports"),
-        app_commands.Choice(name="Weather", value="weather"),
+        app_commands.Choice(name="Financials", value="Financials"),
+        app_commands.Choice(name="Politics", value="Politics"),
+        app_commands.Choice(name="Elections", value="Elections"),
+        app_commands.Choice(name="Sports", value="Sports"),
+        app_commands.Choice(name="Climate and Weather", value="Climate and Weather"),
+        app_commands.Choice(name="Crypto", value="Crypto"),
+        app_commands.Choice(name="Economics", value="Economics"),
+        app_commands.Choice(name="Entertainment", value="Entertainment"),
+        app_commands.Choice(name="Science and Technology", value="Science and Technology"),
+        app_commands.Choice(name="Companies", value="Companies"),
+        app_commands.Choice(name="Commodities", value="Commodities"),
+        app_commands.Choice(name="Mentions", value="Mentions"),
     ])
     async def predict_cmd(
         interaction: discord.Interaction,
@@ -107,7 +116,7 @@ def create_bot(
             await _deny(interaction)
             return
         await interaction.response.defer()
-        cat_value = category.value if category else "finance"
+        cat_value = category.value if category else "Financials"
         result = await handle_predict(
             question, cat_value, interaction.user.id, prediction_client
         )
@@ -157,10 +166,11 @@ def create_bot(
     )
     @app_commands.choices(category=[
         app_commands.Choice(name="All", value="all"),
-        app_commands.Choice(name="Finance", value="finance"),
-        app_commands.Choice(name="Politics", value="politics"),
-        app_commands.Choice(name="Sports", value="sports"),
-        app_commands.Choice(name="Weather", value="weather"),
+        app_commands.Choice(name="Financials", value="Financials"),
+        app_commands.Choice(name="Politics", value="Politics"),
+        app_commands.Choice(name="Sports", value="Sports"),
+        app_commands.Choice(name="Climate and Weather", value="Climate"),
+        app_commands.Choice(name="Crypto", value="Crypto"),
     ])
     async def markets_cmd(
         interaction: discord.Interaction,
@@ -174,6 +184,21 @@ def create_bot(
         result = await handle_markets(
             interaction.user.id, opportunity_client, category=cat_value
         )
+        await interaction.followup.send(result)
+
+    # --- /hot -------------------------------------------------------------
+
+    @tree.command(
+        name="hot",
+        description="Market Interest: most active, fastest rising, highest liquidity, top opportunities.",
+        guild=guild,
+    )
+    async def hot_cmd(interaction: discord.Interaction) -> None:
+        if not _auth(interaction.user.id):
+            await _deny(interaction)
+            return
+        await interaction.response.defer()
+        result = await handle_hot(interaction.user.id, opportunity_client)
         await interaction.followup.send(result)
 
     # --- /brief -----------------------------------------------------------

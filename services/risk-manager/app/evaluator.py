@@ -52,6 +52,25 @@ def check_bankroll(
     return cost <= allowed
 
 
+def check_direction_bias(
+    prediction_direction: str | None,
+    confidence: float,
+    min_yes_confidence: float,
+) -> bool:
+    """
+    YES predictions must clear a higher confidence bar than NO predictions.
+
+    Resolved history shows mid-confidence YES calls performing far below
+    50% while NO calls at the same confidence hold up.  Absent direction
+    passes (backward compatibility with older callers).
+    """
+    if prediction_direction is None:
+        return True
+    if prediction_direction.strip().lower() != "yes":
+        return True
+    return confidence >= min_yes_confidence
+
+
 def check_consecutive_losses(
     recent_decisions: list[dict],
     max_consecutive_losses: int,
@@ -106,6 +125,11 @@ def _denial_reason(
             f"Consecutive denied evaluations at limit "
             f"({settings.max_consecutive_losses})"
         )
+    if not checks.direction_bias:
+        parts.append(
+            f"YES prediction confidence {request.confidence:.2f} below "
+            f"YES-specific minimum {settings.min_yes_confidence:.2f}"
+        )
     return "; ".join(parts) if parts else "Risk criteria not satisfied."
 
 
@@ -139,6 +163,11 @@ def run_evaluation(
         consecutive_losses=check_consecutive_losses(
             recent_decisions, settings.max_consecutive_losses
         ),
+        direction_bias=check_direction_bias(
+            request.prediction_direction,
+            request.confidence,
+            settings.min_yes_confidence,
+        ),
     )
 
     all_passed = all([
@@ -149,6 +178,7 @@ def run_evaluation(
         checks.daily_loss,
         checks.bankroll,
         checks.consecutive_losses,
+        checks.direction_bias,
     ])
 
     if settings.dry_run:

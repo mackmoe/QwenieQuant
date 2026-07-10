@@ -37,7 +37,6 @@ def _settings(**overrides) -> Settings:
         kalshi_market_limit=100,
         postgres_url="",
         http_timeout=5.0,
-        supported_categories="weather,sports",
         prediction_queue_url="http://mock-queue:8006",
         publish_to_queue=True,
         queue_publish_batch_size=10,

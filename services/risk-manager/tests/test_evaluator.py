@@ -2,6 +2,7 @@ import pytest
 
 from app.config import Settings
 from app.evaluator import (
+    check_direction_bias,
     check_bankroll,
     check_confidence,
     check_consecutive_losses,
@@ -421,3 +422,60 @@ def test_evaluate_no_contracts_when_denied():
     )
     assert response.recommended_contracts is None
     assert response.recommended_max_price is None
+
+
+# ── check_direction_bias (YES-bias guard) ───────────────────────────────────
+
+
+def test_direction_bias_yes_below_threshold_fails():
+    assert check_direction_bias("yes", 0.65, 0.70) is False
+
+
+def test_direction_bias_yes_at_threshold_passes():
+    assert check_direction_bias("yes", 0.70, 0.70) is True
+
+
+def test_direction_bias_no_prediction_always_passes():
+    assert check_direction_bias("no", 0.10, 0.70) is True
+
+
+def test_direction_bias_absent_direction_passes():
+    assert check_direction_bias(None, 0.10, 0.70) is True
+
+
+def test_direction_bias_case_insensitive():
+    assert check_direction_bias("YES", 0.50, 0.70) is False
+    assert check_direction_bias("  Yes ", 0.50, 0.70) is False
+
+
+def test_run_evaluation_denies_low_confidence_yes():
+    request = _request(prediction_direction="yes", confidence=0.65)
+    result = run_evaluation(
+        request, _account(), [], 0, [], _settings()
+    )
+    assert result.approved is False
+    assert result.risk_checks.direction_bias is False
+    assert "YES prediction confidence" in result.reason
+
+
+def test_run_evaluation_approves_no_at_same_confidence():
+    request = _request(prediction_direction="no", confidence=0.65)
+    result = run_evaluation(
+        request, _account(), [], 0, [], _settings()
+    )
+    assert result.risk_checks.direction_bias is True
+
+
+def test_run_evaluation_approves_high_confidence_yes():
+    request = _request(prediction_direction="yes", confidence=0.80)
+    result = run_evaluation(
+        request, _account(), [], 0, [], _settings()
+    )
+    assert result.risk_checks.direction_bias is True
+
+
+def test_run_evaluation_backward_compatible_without_direction():
+    result = run_evaluation(
+        _request(), _account(), [], 0, [], _settings()
+    )
+    assert result.risk_checks.direction_bias is True

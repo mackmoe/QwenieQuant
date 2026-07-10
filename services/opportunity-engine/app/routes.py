@@ -97,6 +97,71 @@ async def get_top_opportunities(
     )
 
 
+def _view_entry(m: ScoredMarket) -> dict:
+    meta = m.metadata
+    return {
+        "ticker": m.ticker,
+        "title": m.title,
+        "priority_score": m.priority_score,
+        "assigned_tier": m.assigned_tier,
+        "category": meta.get("category"),
+        "volume": meta.get("volume"),
+        "volume_delta": meta.get("volume_delta"),
+        "price_delta": meta.get("price_delta"),
+        "open_interest": meta.get("open_interest"),
+        "spread": meta.get("spread"),
+        "rank": meta.get("rank"),
+        "rank_delta": meta.get("rank_delta"),
+    }
+
+
+@router.get("/views")
+async def get_views(
+    limit: int = Query(default=5, ge=1, le=25),
+) -> dict:
+    """
+    Market Interest views computed from the latest scan:
+
+      most_active         largest volume gain since the previous scan
+      fastest_rising      largest mid-price climb since the previous scan
+      highest_liquidity   deepest open interest (tight spread as tiebreaker)
+      highest_opportunity top Market Interest Score (priority_score)
+    """
+    last_scan, markets = scheduler.get_state()
+
+    def _meta(m: ScoredMarket, key: str, default=0):
+        v = m.metadata.get(key)
+        return v if v is not None else default
+
+    most_active = sorted(
+        (m for m in markets if _meta(m, "volume_delta") > 0),
+        key=lambda m: _meta(m, "volume_delta"),
+        reverse=True,
+    )[:limit]
+
+    fastest_rising = sorted(
+        (m for m in markets if _meta(m, "price_delta", 0.0) > 0),
+        key=lambda m: _meta(m, "price_delta", 0.0),
+        reverse=True,
+    )[:limit]
+
+    highest_liquidity = sorted(
+        markets,
+        key=lambda m: (_meta(m, "open_interest"), -_meta(m, "spread", 99)),
+        reverse=True,
+    )[:limit]
+
+    highest_opportunity = markets[:limit]  # already sorted by priority_score
+
+    return {
+        "most_active": [_view_entry(m) for m in most_active],
+        "fastest_rising": [_view_entry(m) for m in fastest_rising],
+        "highest_liquidity": [_view_entry(m) for m in highest_liquidity],
+        "highest_opportunity": [_view_entry(m) for m in highest_opportunity],
+        "scored_at": last_scan.isoformat() if last_scan else None,
+    }
+
+
 @router.post("/refresh", response_model=RefreshResponse)
 async def refresh() -> RefreshResponse:
     """Trigger an immediate scoring pass outside the scheduled interval."""

@@ -21,6 +21,7 @@ from app.formatter import (
     format_activity,
     format_brief,
     format_error,
+    format_hot,
     format_markets,
     format_performance,
     format_prediction,
@@ -108,6 +109,19 @@ async def handle_markets(
         elapsed_ms,
     )
     return format_markets(result, category=category)
+
+
+async def handle_hot(
+    user_id: int,
+    opportunity_client: OpportunityClient,
+    limit: int = 3,
+) -> str:
+    """Market Interest views: most active, fastest rising, liquidity, top MIS."""
+    start = time.monotonic()
+    views = await opportunity_client.get_views(limit=limit)
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    logger.info("hot user=%d limit=%d elapsed=%dms", user_id, limit, elapsed_ms)
+    return format_hot(views)
 
 
 async def handle_workflow(

@@ -46,7 +46,6 @@ def _settings_obj():
         kalshi_market_limit=100,
         postgres_url="",
         http_timeout=5.0,
-        supported_categories="weather,sports",
     )
 
 
@@ -378,3 +377,80 @@ def test_refresh_empty_kalshi_returns_zero(tc):
 
     assert r.status_code == 200
     assert r.json()["markets_scored"] == 0
+
+
+# ---------------------------------------------------------------------------
+# GET /views — Market Interest views
+# ---------------------------------------------------------------------------
+
+
+def _scored_meta(ticker: str, score: float, **meta) -> ScoredMarket:
+    return ScoredMarket(
+        market_id=ticker,
+        ticker=ticker,
+        title=ticker,
+        priority_score=score,
+        assigned_tier=3,
+        scoring_timestamp=_now(),
+        metadata=meta,
+    )
+
+
+def test_views_highest_opportunity_is_score_order(tc):
+    _set_state(_now(), [
+        _scored_meta("HI", 90.0),
+        _scored_meta("LO", 10.0),
+    ])
+    client, _, _ = tc
+    data = client.get("/views").json()
+    tickers = [m["ticker"] for m in data["highest_opportunity"]]
+    assert tickers == ["HI", "LO"]
+
+
+def test_views_most_active_sorted_by_volume_delta(tc):
+    _set_state(_now(), [
+        _scored_meta("A", 50.0, volume_delta=10),
+        _scored_meta("B", 50.0, volume_delta=500),
+        _scored_meta("C", 50.0, volume_delta=0),
+    ])
+    client, _, _ = tc
+    data = client.get("/views").json()
+    tickers = [m["ticker"] for m in data["most_active"]]
+    assert tickers == ["B", "A"]  # zero-delta market excluded
+
+
+def test_views_fastest_rising_only_positive_moves(tc):
+    _set_state(_now(), [
+        _scored_meta("UP", 50.0, price_delta=4.0),
+        _scored_meta("DOWN", 50.0, price_delta=-6.0),
+    ])
+    client, _, _ = tc
+    data = client.get("/views").json()
+    tickers = [m["ticker"] for m in data["fastest_rising"]]
+    assert tickers == ["UP"]
+
+
+def test_views_highest_liquidity_by_open_interest(tc):
+    _set_state(_now(), [
+        _scored_meta("THIN", 50.0, open_interest=10),
+        _scored_meta("DEEP", 50.0, open_interest=9000),
+    ])
+    client, _, _ = tc
+    data = client.get("/views").json()
+    assert data["highest_liquidity"][0]["ticker"] == "DEEP"
+
+
+def test_views_respects_limit(tc):
+    _set_state(_now(), [_scored_meta(f"T{i}", 50.0 - i) for i in range(10)])
+    client, _, _ = tc
+    data = client.get("/views?limit=2").json()
+    assert len(data["highest_opportunity"]) == 2
+
+
+def test_views_empty_state_returns_empty_lists(tc):
+    _set_state(None, [])
+    client, _, _ = tc
+    data = client.get("/views").json()
+    assert data["most_active"] == []
+    assert data["highest_opportunity"] == []
+    assert data["scored_at"] is None
