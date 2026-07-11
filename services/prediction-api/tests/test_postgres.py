@@ -84,10 +84,15 @@ def test_fetch_recent_returns_empty_when_pool_is_none():
     assert result == []
 
 
-def test_fetch_historical_context_always_returns_empty():
+def test_fetch_historical_context_empty_shape_without_pool():
     pg._pool = None
-    result = asyncio.run(pg.fetch_historical_context("some question?"))
-    assert result == []
+    result = asyncio.run(pg.fetch_historical_context("Sports", "KXMLB-26-X"))
+    assert result == {
+        "category_stats": None,
+        "series_stats": None,
+        "lessons": [],
+        "exemplars": [],
+    }
 
 
 # --- mock-pool behaviour ---

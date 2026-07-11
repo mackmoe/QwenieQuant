@@ -98,8 +98,117 @@ async def shutdown() -> None:
         _pool = None
 
 
-async def fetch_historical_context(question: str) -> list:
-    return []
+_MIN_TRACK_RECORD_RESOLVED = 10
+
+
+async def fetch_historical_context(category: str, market_id: str | None) -> dict:
+    """
+    Self-knowledge for the model's prompt (in-context learning loop):
+
+      category_stats  — resolved accuracy in this category (trailing 30d)
+      series_stats    — resolved accuracy for this market's series (30d)
+      lessons         — latest reflection weaknesses + top recommendation
+      exemplars       — recent correct, directional predictions (same
+                        category preferred) as worked examples
+
+    Returns empty-shaped dict on any failure; the prompt degrades to the
+    history-free form.
+    """
+    empty: dict = {
+        "category_stats": None,
+        "series_stats": None,
+        "lessons": [],
+        "exemplars": [],
+    }
+    if _pool is None:
+        return empty
+
+    series = market_id.split("-", 1)[0] if market_id else None
+    try:
+        async with _pool.acquire() as conn:
+            cat_row = await conn.fetchrow(
+                """
+                SELECT count(*) AS resolved,
+                       avg(CASE WHEN o.prediction_correct THEN 1.0 ELSE 0.0 END)
+                           AS accuracy
+                FROM prediction.prediction_outcomes o
+                JOIN prediction.prediction_requests q USING (prediction_id)
+                WHERE q.category = $1
+                  AND o.prediction_correct IS NOT NULL
+                  AND q.created_at > now() - interval '30 days'
+                """,
+                category,
+            )
+
+            series_row = None
+            if series:
+                series_row = await conn.fetchrow(
+                    """
+                    SELECT count(*) AS resolved,
+                           avg(CASE WHEN o.prediction_correct THEN 1.0 ELSE 0.0 END)
+                               AS accuracy
+                    FROM prediction.prediction_outcomes o
+                    WHERE split_part(o.market_id, '-', 1) = $1
+                      AND o.prediction_correct IS NOT NULL
+                      AND o.collected_time > now() - interval '30 days'
+                    """,
+                    series,
+                )
+
+            reflection = await conn.fetchrow(
+                """
+                SELECT weaknesses, recommendations
+                FROM reflection.reflections
+                ORDER BY generated_at DESC
+                LIMIT 1
+                """
+            )
+
+            exemplar_rows = await conn.fetch(
+                """
+                SELECT q.question, r.prediction, r.confidence
+                FROM prediction.prediction_responses r
+                JOIN prediction.prediction_requests q USING (prediction_id)
+                JOIN prediction.prediction_outcomes o USING (prediction_id)
+                WHERE o.prediction_correct IS TRUE
+                  AND r.confidence >= 0.55
+                ORDER BY (q.category = $1) DESC, r.created_at DESC
+                LIMIT 2
+                """,
+                category,
+            )
+    except Exception:
+        logger.exception("historical context fetch failed — predicting without it")
+        return empty
+
+    def _stats(row, label):
+        if row and row["resolved"] and row["resolved"] >= _MIN_TRACK_RECORD_RESOLVED:
+            return {
+                "label": label,
+                "resolved": row["resolved"],
+                "accuracy": float(row["accuracy"]),
+            }
+        return None
+
+    lessons: list[str] = []
+    if reflection:
+        weaknesses = reflection["weaknesses"] or []
+        recommendations = reflection["recommendations"] or []
+        lessons = [str(w) for w in weaknesses[:2]] + [str(r) for r in recommendations[:1]]
+
+    return {
+        "category_stats": _stats(cat_row, category),
+        "series_stats": _stats(series_row, series) if series else None,
+        "lessons": lessons,
+        "exemplars": [
+            {
+                "question": r["question"],
+                "prediction": r["prediction"],
+                "confidence": float(r["confidence"]),
+            }
+            for r in exemplar_rows
+        ],
+    }
 
 
 def _build_response_payload(response: PredictionResponse, calibration_result) -> dict:

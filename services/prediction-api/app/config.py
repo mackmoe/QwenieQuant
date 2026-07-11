@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     searxng_max_results: int = 5
 
     postgres_url: str = ""
-    prompt_version: str = "1.0"
+    prompt_version: str = "2.0"  # 2.0 = self-knowledge sections (track record, lessons, exemplars)
 
     confidence_calibration_enabled: bool = True
     confidence_min_history: int = 25

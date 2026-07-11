@@ -23,7 +23,17 @@ async def health():
 async def predict(request: PredictionRequest) -> PredictionResponse:
     settings = get_settings()
 
-    await postgres.fetch_historical_context(request.question)
+    # Self-knowledge for the prompt: track record, lessons, exemplars.
+    history = await postgres.fetch_historical_context(
+        request.category, request.market_id
+    )
+    logger.info(
+        "historical_context category=%s track_record=%s lessons=%d exemplars=%d",
+        request.category,
+        bool(history.get("category_stats") or history.get("series_stats")),
+        len(history.get("lessons") or []),
+        len(history.get("exemplars") or []),
+    )
 
     # Deterministic search decision — model is never consulted.
     evidence: list[searxng.SearchResult] = []
@@ -48,7 +58,9 @@ async def predict(request: PredictionRequest) -> PredictionResponse:
             request.category,
         )
 
-    system_prompt, user_prompt = build_prediction_prompt(request, evidence or None)
+    system_prompt, user_prompt = build_prediction_prompt(
+        request, evidence or None, history=history
+    )
 
     start = time.monotonic()
     try:
