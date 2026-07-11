@@ -236,6 +236,8 @@ async def handle_brief(
         prediction_client.health(),
         risk_manager_client.health(),
         opportunity_client.get_opportunities(limit=1),
+        queue_client.get_activity_stats(),
+        opportunity_client.get_best_by_category(),
         return_exceptions=True,
     )
 
@@ -243,7 +245,7 @@ async def handle_brief(
         return r if isinstance(r, dict) else {"error": str(r)}
 
     (oe_health, pq_health, pq_stats, analysis,
-     pred_health, rm_health, top_opps) = [_safe(r) for r in results]
+     pred_health, rm_health, top_opps, activity, by_category) = [_safe(r) for r in results]
 
     # Sequential: reflect only if analyze returned a valid analysis_id.
     # The reflection engine is rule-based (no LLM), so this is fast.
@@ -267,6 +269,8 @@ async def handle_brief(
         reflection=reflection,
         settings=settings,
         uptime_seconds=uptime_seconds,
+        activity=activity,
+        by_category=by_category,
     )
 
 

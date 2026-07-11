@@ -431,3 +431,62 @@ class TestRunWorkflow:
             assert resp.status_code == 503
         finally:
             routes_module.set_dependencies(None, _settings())
+
+
+# ---------------------------------------------------------------------------
+# Tests: GET /stats/activity
+# ---------------------------------------------------------------------------
+
+
+class TestActivityStats:
+    def test_returns_zeroes_without_pool(self, tc):
+        resp = tc.get("/stats/activity")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["processed"] == 0
+        assert data["queued_now"] == 0
+        assert data["carried_over"] == 0
+        assert data["window_minutes"] == 60
+
+    def test_reports_queue_aging(self, tc):
+        from datetime import datetime, timedelta, timezone
+        from app import queue as qm
+        from app.models import AddOpportunity
+
+        s = _settings()
+        qm.add_or_update(
+            [AddOpportunity(market_id="OLD-1", ticker="OLD-1", priority_score=50.0),
+             AddOpportunity(market_id="NEW-1", ticker="NEW-1", priority_score=60.0)],
+            s,
+        )
+        # age one entry past the window
+        for e in qm.get_queue():
+            if e.market_id == "OLD-1":
+                e.enqueue_time = datetime.now(timezone.utc) - timedelta(minutes=90)
+
+        resp = tc.get("/stats/activity")
+        data = resp.json()
+        assert data["queued_now"] == 2
+        assert data["carried_over"] == 1
+        assert data["oldest_queued_minutes"] >= 89
+
+    def test_window_param_respected(self, tc):
+        resp = tc.get("/stats/activity?window_minutes=120")
+        assert resp.json()["window_minutes"] == 120
+
+    def test_db_stats_flow_through(self, tc):
+        mock_pool = MagicMock()
+        routes_module.set_dependencies(mock_pool, _settings())
+        with patch(
+            "app.routes.postgres_module.fetch_activity_stats",
+            new_callable=AsyncMock,
+            return_value={"processed": 11, "approved": 2, "searched": 9,
+                          "avg_duration_seconds": 186.0},
+        ):
+            resp = tc.get("/stats/activity")
+        routes_module.set_dependencies(None, _settings())
+        data = resp.json()
+        assert data["processed"] == 11
+        assert data["approved"] == 2
+        assert data["searched"] == 9
+        assert data["avg_duration_seconds"] == 186.0

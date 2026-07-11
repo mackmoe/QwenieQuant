@@ -83,6 +83,10 @@ class OpportunityClient(ServiceClient):
         """Market Interest views: most active, fastest rising, liquidity, top MIS."""
         return await self._get(f"/views?limit={limit}")
 
+    async def get_best_by_category(self) -> dict:
+        """Top-priority market in every Kalshi category."""
+        return await self._get("/opportunities/by-category")
+
     async def refresh(self) -> dict:
         return await self._post("/refresh", {})
 
@@ -97,6 +101,10 @@ class PredictionQueueClient(ServiceClient):
 
     async def get_recent_completed(self, limit: int = 25) -> dict:
         return await self._get(f"/queue?state=COMPLETED&limit={limit}")
+
+    async def get_activity_stats(self, window_minutes: int = 60) -> dict:
+        """Trailing-window throughput + queue aging (processed, approved, etc.)."""
+        return await self._get(f"/stats/activity?window_minutes={window_minutes}")
 
     async def run_workflow(self) -> dict:
         return await self._post("/run", {}, timeout=360.0)

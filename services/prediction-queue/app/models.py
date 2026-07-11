@@ -83,6 +83,18 @@ class HealthStatus(BaseModel):
     version: str
 
 
+class ActivityStats(BaseModel):
+    window_minutes: int
+    processed: int              # workflow results completed in the window
+    approved: int               # risk-approved in the window
+    searched: int               # processed predictions that used SearXNG
+    avg_duration_seconds: float | None = None
+    queued_now: int
+    in_progress_now: int
+    carried_over: int           # queued entries older than the window
+    oldest_queued_minutes: int | None = None
+
+
 class RunResponse(BaseModel):
     status: str  # "busy" | "empty" | "completed" | "requeued" | "failed" | "skipped"
     reason: str | None = None

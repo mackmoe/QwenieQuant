@@ -127,6 +127,7 @@ def _mk_oe(health=None, opps=None):
     c = MagicMock()
     c.health = AsyncMock(return_value=health or _oe_health())
     c.get_opportunities = AsyncMock(return_value=opps or _top_opps())
+    c.get_best_by_category = AsyncMock(return_value={"error": "unavailable"})
     return c
 
 
@@ -134,6 +135,7 @@ def _mk_pq(health=None, stats=None):
     c = MagicMock()
     c.health = AsyncMock(return_value=health or _pq_health())
     c.get_stats = AsyncMock(return_value=stats or _pq_stats())
+    c.get_activity_stats = AsyncMock(return_value={"error": "unavailable"})
     return c
 
 

@@ -12,6 +12,7 @@ from app.config import Settings
 from app.health import get_health
 from app.models import (
     ACTIVE_STATES,
+    ActivityStats,
     AddRequest,
     AddResponse,
     HealthStatus,
@@ -58,6 +59,48 @@ async def get_queue(
         active=active,
         by_state={k: v for k, v in by_state.items()},
         version=_settings.version,
+    )
+
+
+@router.get("/stats/activity", response_model=ActivityStats)
+async def activity_stats(
+    window_minutes: int = Query(60, ge=5, le=1440),
+) -> ActivityStats:
+    """
+    Workflow throughput over a trailing window plus current queue aging.
+
+    Answers "how many queued markets actually got processed" and "is the
+    queue clearing each cycle" — the in-memory queue is the source of
+    truth for aging; postgres provides the throughput counts.
+    """
+    from datetime import datetime, timezone
+
+    db_stats = {"processed": 0, "approved": 0, "searched": 0, "avg_duration_seconds": None}
+    if _pool is not None:
+        try:
+            db_stats = await postgres_module.fetch_activity_stats(_pool, window_minutes)
+        except Exception:
+            logger.exception("activity stats query failed")
+
+    now = datetime.now(timezone.utc)
+    queued = queue_module.get_queue(state=QueueState.QUEUED)
+    in_progress = queue_module.get_queue(state=QueueState.IN_PROGRESS)
+    ages_min = [
+        (now - e.enqueue_time).total_seconds() / 60 for e in queued
+    ]
+    carried_over = sum(1 for a in ages_min if a > window_minutes)
+    oldest = int(max(ages_min)) if ages_min else None
+
+    return ActivityStats(
+        window_minutes=window_minutes,
+        processed=db_stats["processed"],
+        approved=db_stats["approved"],
+        searched=db_stats["searched"],
+        avg_duration_seconds=db_stats["avg_duration_seconds"],
+        queued_now=len(queued),
+        in_progress_now=len(in_progress),
+        carried_over=carried_over,
+        oldest_queued_minutes=oldest,
     )
 
 

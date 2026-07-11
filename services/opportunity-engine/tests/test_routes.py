@@ -454,3 +454,47 @@ def test_views_empty_state_returns_empty_lists(tc):
     assert data["most_active"] == []
     assert data["highest_opportunity"] == []
     assert data["scored_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# GET /opportunities/by-category
+# ---------------------------------------------------------------------------
+
+
+def test_by_category_returns_top_per_category(tc):
+    client, _, _ = tc
+    _set_state(_now(), [
+        _scored_meta("S-HI", 90.0, category="Sports"),
+        _scored_meta("S-LO", 70.0, category="Sports"),
+        _scored_meta("F-1", 60.0, category="Financials"),
+    ])
+    data = client.get("/opportunities/by-category").json()
+    cats = {e["category"]: e for e in data["categories"]}
+    assert cats["Sports"]["ticker"] == "S-HI"
+    assert cats["Financials"]["ticker"] == "F-1"
+    assert len(data["categories"]) == 2
+
+
+def test_by_category_sorted_by_score(tc):
+    client, _, _ = tc
+    _set_state(_now(), [
+        _scored_meta("F-1", 60.0, category="Financials"),
+        _scored_meta("S-1", 90.0, category="Sports"),
+    ])
+    data = client.get("/opportunities/by-category").json()
+    assert [e["category"] for e in data["categories"]] == ["Sports", "Financials"]
+
+
+def test_by_category_uncategorized_grouped_as_other(tc):
+    client, _, _ = tc
+    _set_state(_now(), [_scored_meta("X-1", 50.0)])
+    data = client.get("/opportunities/by-category").json()
+    assert data["categories"][0]["category"] == "Other"
+
+
+def test_by_category_empty_state(tc):
+    client, _, _ = tc
+    _set_state(None, [])
+    data = client.get("/opportunities/by-category").json()
+    assert data["categories"] == []
+    assert data["scored_at"] is None

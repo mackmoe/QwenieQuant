@@ -155,6 +155,8 @@ class WorkflowNotifier:
             self._pred.health(),
             self._rm.health(),
             self._oe.get_opportunities(limit=1),
+            self._pq.get_activity_stats(),
+            self._oe.get_best_by_category(),
             return_exceptions=True,
         )
 
@@ -162,7 +164,7 @@ class WorkflowNotifier:
             return r if isinstance(r, dict) else {"error": str(r)}
 
         (oe_health, pq_health, pq_stats, analysis,
-         pred_health, rm_health, top_opps) = [_safe(r) for r in results]
+         pred_health, rm_health, top_opps, activity, by_category) = [_safe(r) for r in results]
 
         reflection: dict = {"error": "no analysis available"}
         if "error" not in analysis and analysis.get("analysis_id"):
@@ -186,4 +188,6 @@ class WorkflowNotifier:
             workflow_num=workflow_num,
             trigger=trigger,
             completed_at=completed_at,
+            activity=activity,
+            by_category=by_category,
         )

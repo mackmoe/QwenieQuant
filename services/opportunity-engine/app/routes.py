@@ -115,6 +115,40 @@ def _view_entry(m: ScoredMarket) -> dict:
     }
 
 
+@router.get("/opportunities/by-category")
+async def get_best_by_category() -> dict:
+    """
+    The single highest-priority market in every Kalshi category.
+
+    Markets are already sorted by Market Interest Score; the first market
+    seen per category is that category's best.  Markets whose event could
+    not be resolved to a category are grouped under "Other".
+    """
+    last_scan, markets = scheduler.get_state()
+
+    best: dict[str, ScoredMarket] = {}
+    for m in markets:
+        category = m.metadata.get("category") or "Other"
+        if category not in best:
+            best[category] = m
+
+    entries = [
+        {
+            **_view_entry(m),
+            "category": category,  # after spread: keeps "Other" for uncategorized
+            "days_remaining": m.metadata.get("days_remaining"),
+        }
+        for category, m in best.items()
+    ]
+    # Strongest categories first
+    entries.sort(key=lambda e: e["priority_score"], reverse=True)
+
+    return {
+        "categories": entries,
+        "scored_at": last_scan.isoformat() if last_scan else None,
+    }
+
+
 @router.get("/views")
 async def get_views(
     limit: int = Query(default=5, ge=1, le=25),

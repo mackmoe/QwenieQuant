@@ -393,6 +393,54 @@ def format_activity(completed: dict, oe_health: dict) -> str:
     return header + body.rstrip()
 
 
+def _render_activity_lines(
+    oe_health: dict,
+    pq_stats: dict,
+    activity: dict | None,
+) -> list[str]:
+    """
+    Shared 📊 Activity block for brief/notification.
+
+    With activity stats available, shows flow (processed per hour, queue
+    clearing) instead of only point-in-time counts.
+    """
+    oe_ok = "error" not in oe_health and oe_health.get("status") == "ok"
+    by_state = pq_stats.get("by_state", {}) if "error" not in pq_stats else {}
+    markets_scored = oe_health.get("markets_scored") if oe_ok else None
+    completed = by_state.get("COMPLETED", 0)
+
+    lines = ["📊 **Activity**"]
+    if markets_scored is not None:
+        lines.append(f"Markets Scanned: {markets_scored:,}")
+
+    if activity and "error" not in activity:
+        window = activity.get("window_minutes", 60)
+        processed = activity.get("processed", 0)
+        approved = activity.get("approved", 0)
+        searched = activity.get("searched", 0)
+        queued_now = activity.get("queued_now", 0)
+        carried = activity.get("carried_over", 0)
+        oldest = activity.get("oldest_queued_minutes")
+        avg_s = activity.get("avg_duration_seconds")
+
+        window_label = f"{window}m" if window != 60 else "1h"
+        queue_note = "clearing ✅" if carried == 0 else f"{carried} carried over ⚠️"
+        lines.append(f"Queued Now: {queued_now} ({queue_note})")
+        lines.append(f"Processed ({window_label}): {processed}  |  Approved: {approved}")
+        if processed:
+            lines.append(f"Searched: {searched} of {processed}")
+        if avg_s is not None:
+            lines.append(f"Avg Prediction: {avg_s / 60:.1f}m")
+        if oldest is not None and carried > 0:
+            lines.append(f"Oldest Queued: {oldest}m")
+    else:
+        queued = by_state.get("QUEUED", 0)
+        lines.append(f"Queued: {queued}")
+
+    lines.append(f"Predictions: {completed:,}")
+    return lines
+
+
 def _fmt_uptime(seconds: float) -> str:
     s = int(seconds)
     if s < 0:
@@ -420,6 +468,8 @@ def format_brief(
     reflection: dict,
     settings,
     uptime_seconds: float,
+    activity: dict | None = None,
+    by_category: dict | None = None,
 ) -> str:
     lines: list[str] = ["**Platform Brief**", ""]
 
@@ -443,14 +493,7 @@ def format_brief(
     ]
 
     # --- Section 2: Activity Summary ---
-    by_state = pq_stats.get("by_state", {}) if "error" not in pq_stats else {}
-    markets_scored = oe_health.get("markets_scored") if oe_ok else None
-    completed = by_state.get("COMPLETED", 0)
-
-    lines.append("📊 **Activity**")
-    if markets_scored is not None:
-        lines.append(f"Markets Scanned: {markets_scored:,}")
-    lines.append(f"Predictions: {completed:,}")
+    lines += _render_activity_lines(oe_health, pq_stats, activity)
     lines.append("")
 
     # --- Section 3: Performance Snapshot ---
@@ -475,8 +518,8 @@ def format_brief(
             "",
         ]
 
-    # --- Section 4: Best Opportunity ---
-    lines += _render_best_opportunity(top_opps)
+    # --- Section 4: Best Opportunity per category ---
+    lines += _render_top_by_category(by_category, top_opps)
     lines.append("")
 
     # --- Section 5: Latest Reflection ---
@@ -556,6 +599,8 @@ def format_notification(
     workflow_num: int,
     trigger: str,
     completed_at: str | None = None,
+    activity: dict | None = None,
+    by_category: dict | None = None,
 ) -> str:
     lines: list[str] = []
 
@@ -584,16 +629,7 @@ def format_notification(
     ]
 
     # --- Activity ---
-    by_state = pq_stats.get("by_state", {}) if "error" not in pq_stats else {}
-    markets_scored = oe_health.get("markets_scored") if oe_ok else None
-    queued = by_state.get("QUEUED", 0)
-    completed_count = by_state.get("COMPLETED", 0)
-
-    lines.append("📊 **Activity**")
-    if markets_scored is not None:
-        lines.append(f"Markets Scanned: {markets_scored:,}")
-    lines.append(f"Queued: {queued}")
-    lines.append(f"Predictions: {completed_count:,}")
+    lines += _render_activity_lines(oe_health, pq_stats, activity)
     lines.append("")
 
     # --- Performance ---
@@ -620,8 +656,8 @@ def format_notification(
             "",
         ]
 
-    # --- Best Opportunity ---
-    lines += _render_best_opportunity(top_opps)
+    # --- Best Opportunity per category ---
+    lines += _render_top_by_category(by_category, top_opps)
     lines.append("")
 
     # --- Learning Summary (observations only) ---
@@ -716,6 +752,28 @@ def _parse_opportunity_title(raw_title: str) -> tuple[str, str]:
     if low.startswith("no "):
         return first[3:].strip(), "NO"
     return first, "Unknown"
+
+
+def _render_top_by_category(by_category: dict | None, top_opps: dict) -> list[str]:
+    """
+    ⭐ block: the best market in every Kalshi category, strongest first.
+    Falls back to the single-market Best Opportunity when the by-category
+    data is unavailable.
+    """
+    cats = (by_category or {}).get("categories") if by_category and "error" not in by_category else None
+    if not cats:
+        return _render_best_opportunity(top_opps)
+
+    lines = ["⭐ **Top Opportunity per Category**"]
+    for entry in cats:
+        name, prediction = _parse_opportunity_title(entry.get("title") or entry.get("ticker", "—"))
+        title = _truncate(name, 42)
+        score = entry.get("priority_score", 0.0)
+        line = f"{entry.get('category', 'Other')}: {title} · {score:.0f}"
+        if prediction != "Unknown":
+            line += f" · {prediction}"
+        lines.append(line)
+    return lines
 
 
 def _render_best_opportunity(top_opps: dict) -> list[str]:

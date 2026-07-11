@@ -656,3 +656,182 @@ def test_format_hot_within_discord_limit():
     big["scored_at"] = None
     result = format_hot(big)
     assert len(result) <= 2000
+
+
+# --- _render_activity_lines (activity stats) ---
+
+from app.formatter import _render_activity_lines
+
+_ACTIVITY_OK = {
+    "window_minutes": 60,
+    "processed": 11,
+    "approved": 2,
+    "searched": 9,
+    "avg_duration_seconds": 186.0,
+    "queued_now": 19,
+    "in_progress_now": 1,
+    "carried_over": 0,
+    "oldest_queued_minutes": 42,
+}
+
+_OE_OK = {"status": "ok", "markets_scored": 1700}
+_PQ_STATS = {"by_state": {"QUEUED": 19, "COMPLETED": 56}}
+
+
+def test_activity_shows_processed_and_approved():
+    text = "\n".join(_render_activity_lines(_OE_OK, _PQ_STATS, _ACTIVITY_OK))
+    assert "Processed (1h): 11" in text
+    assert "Approved: 2" in text
+
+
+def test_activity_shows_queue_clearing_check():
+    text = "\n".join(_render_activity_lines(_OE_OK, _PQ_STATS, _ACTIVITY_OK))
+    assert "clearing ✅" in text
+
+
+def test_activity_warns_on_carried_over():
+    stale = {**_ACTIVITY_OK, "carried_over": 5, "oldest_queued_minutes": 130}
+    text = "\n".join(_render_activity_lines(_OE_OK, _PQ_STATS, stale))
+    assert "5 carried over ⚠️" in text
+    assert "Oldest Queued: 130m" in text
+
+
+def test_activity_shows_search_ratio_and_duration():
+    text = "\n".join(_render_activity_lines(_OE_OK, _PQ_STATS, _ACTIVITY_OK))
+    assert "Searched: 9 of 11" in text
+    assert "Avg Prediction: 3.1m" in text
+
+
+def test_activity_falls_back_without_stats():
+    text = "\n".join(_render_activity_lines(_OE_OK, _PQ_STATS, {"error": "down"}))
+    assert "Queued: 19" in text
+    assert "Processed" not in text
+
+
+def test_format_brief_includes_activity_stats():
+    settings = type("S", (), {"confidence_calibration_enabled": True})()
+    result = format_brief(
+        oe_health=_OE_OK,
+        pq_health={"active_entries": 0},
+        pq_stats=_PQ_STATS,
+        analysis={"error": "no data"},
+        pred_health={"status": "ok"},
+        rm_health={"status": "ok"},
+        top_opps={"markets": []},
+        reflection={"error": "no data"},
+        settings=settings,
+        uptime_seconds=3600,
+        activity=_ACTIVITY_OK,
+    )
+    assert "Processed (1h): 11" in result
+
+
+def test_format_notification_includes_activity_stats():
+    settings = type("S", (), {"confidence_calibration_enabled": True})()
+    result = format_notification(
+        oe_health=_OE_OK,
+        pq_health={"active_entries": 0},
+        pq_stats=_PQ_STATS,
+        analysis={"error": "no data"},
+        pred_health={"status": "ok"},
+        rm_health={"status": "ok"},
+        top_opps={"markets": []},
+        reflection={"error": "no data"},
+        settings=settings,
+        workflow_num=42,
+        trigger="Scheduled",
+        activity=_ACTIVITY_OK,
+    )
+    assert "Processed (1h): 11" in result
+    assert "clearing ✅" in result
+
+
+# --- _render_top_by_category ---
+
+from app.formatter import _render_top_by_category
+
+_BY_CATEGORY_OK = {
+    "categories": [
+        {"category": "Sports", "title": "yes Milwaukee", "ticker": "KXMLB-1",
+         "priority_score": 96.3, "days_remaining": 0.5},
+        {"category": "Commodities", "title": "Will WTI close above $69.49?",
+         "ticker": "KXWTI-1", "priority_score": 81.7, "days_remaining": 1.0},
+        {"category": "Financials", "title": "no S&P closes above 6000",
+         "ticker": "KXINX-1", "priority_score": 64.0, "days_remaining": 2.0},
+    ],
+    "scored_at": "2026-07-10T20:00:00+00:00",
+}
+
+_TOP_OPPS_FALLBACK = {
+    "markets": [{"title": "Fallback market", "priority_score": 50.0,
+                 "assigned_tier": 3, "metadata": {}}]
+}
+
+
+def test_top_by_category_shows_every_category():
+    text = "\n".join(_render_top_by_category(_BY_CATEGORY_OK, _TOP_OPPS_FALLBACK))
+    for cat in ("Sports", "Commodities", "Financials"):
+        assert cat in text
+
+
+def test_top_by_category_strips_yes_no_prefix():
+    text = "\n".join(_render_top_by_category(_BY_CATEGORY_OK, _TOP_OPPS_FALLBACK))
+    assert "Milwaukee" in text
+    assert "yes Milwaukee" not in text
+    assert "· YES" in text   # direction shown separately
+    assert "· NO" in text
+
+
+def test_top_by_category_shows_scores():
+    text = "\n".join(_render_top_by_category(_BY_CATEGORY_OK, _TOP_OPPS_FALLBACK))
+    assert "96" in text and "82" in text
+
+
+def test_top_by_category_falls_back_when_unavailable():
+    text = "\n".join(_render_top_by_category({"error": "down"}, _TOP_OPPS_FALLBACK))
+    assert "Best Opportunity" in text
+    assert "Fallback market" in text
+
+
+def test_top_by_category_falls_back_when_empty():
+    text = "\n".join(_render_top_by_category({"categories": []}, _TOP_OPPS_FALLBACK))
+    assert "Best Opportunity" in text
+
+
+def test_format_brief_renders_by_category():
+    settings = type("S", (), {"confidence_calibration_enabled": True})()
+    result = format_brief(
+        oe_health={"status": "ok", "markets_scored": 100, "last_scan": "2026-07-10T12:00:00Z"},
+        pq_health={"active_entries": 0},
+        pq_stats={"by_state": {}},
+        analysis={"error": "no data"},
+        pred_health={"status": "ok"},
+        rm_health={"status": "ok"},
+        top_opps=_TOP_OPPS_FALLBACK,
+        reflection={"error": "no data"},
+        settings=settings,
+        uptime_seconds=60,
+        by_category=_BY_CATEGORY_OK,
+    )
+    assert "Top Opportunity per Category" in result
+    assert "Commodities" in result
+
+
+def test_format_notification_renders_by_category():
+    settings = type("S", (), {"confidence_calibration_enabled": True})()
+    result = format_notification(
+        oe_health={"status": "ok", "markets_scored": 100, "last_scan": "2026-07-10T12:00:00Z"},
+        pq_health={"active_entries": 0},
+        pq_stats={"by_state": {}},
+        analysis={"error": "no data"},
+        pred_health={"status": "ok"},
+        rm_health={"status": "ok"},
+        top_opps=_TOP_OPPS_FALLBACK,
+        reflection={"error": "no data"},
+        settings=settings,
+        workflow_num=1,
+        trigger="Scheduled",
+        by_category=_BY_CATEGORY_OK,
+    )
+    assert "Top Opportunity per Category" in result
+    assert "Financials" in result

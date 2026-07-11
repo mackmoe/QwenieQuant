@@ -106,10 +106,12 @@ def _mk_notifier(**kwargs):
     oe.get_opportunities = AsyncMock(
         return_value={"markets": [_top_market()], "total": 1}
     )
+    oe.get_best_by_category = AsyncMock(return_value={"error": "unavailable"})
 
     pq = MagicMock()
     pq.health = AsyncMock(return_value=_pq_health())
     pq.get_stats = AsyncMock(return_value=_pq_stats())
+    pq.get_activity_stats = AsyncMock(return_value={"error": "unavailable"})
 
     le = MagicMock()
     le.analyze = AsyncMock(return_value=_analysis_ok())

@@ -126,6 +126,34 @@ ON CONFLICT (result_id) DO NOTHING;
 """
 
 
+async def fetch_activity_stats(pool: asyncpg.Pool, window_minutes: int = 60) -> dict:
+    """
+    Workflow throughput over a trailing window, for operator dashboards.
+
+    searched joins prediction.prediction_responses (same PostgreSQL
+    instance) to report how many processed predictions used SearXNG.
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT count(*)                                            AS processed,
+                   count(*) FILTER (WHERE w.approved)                  AS approved,
+                   count(*) FILTER (WHERE r.search_used)               AS searched,
+                   round(avg(w.duration_ms) / 1000.0, 1)               AS avg_duration_seconds
+            FROM queue.workflow_results w
+            LEFT JOIN prediction.prediction_responses r USING (prediction_id)
+            WHERE w.executed_at > now() - make_interval(mins => $1)
+            """,
+            window_minutes,
+        )
+    return {
+        "processed": row["processed"],
+        "approved": row["approved"],
+        "searched": row["searched"],
+        "avg_duration_seconds": float(row["avg_duration_seconds"]) if row["avg_duration_seconds"] is not None else None,
+    }
+
+
 async def persist_workflow_result(
     pool: asyncpg.Pool,
     *,
