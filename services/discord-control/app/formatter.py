@@ -423,12 +423,27 @@ def _render_activity_lines(
         oldest = activity.get("oldest_queued_minutes")
         avg_s = activity.get("avg_duration_seconds")
 
+        attempted = activity.get("search_attempted", 0)
+        directional = activity.get("directional", 0)
+        avg_edge = activity.get("avg_edge_directional")
+        would_approve = activity.get("would_approve", 0)
+
         window_label = f"{window}m" if window != 60 else "1h"
         queue_note = "clearing ✅" if carried == 0 else f"{carried} carried over ⚠️"
         lines.append(f"Queued Now: {queued_now} ({queue_note})")
         lines.append(f"Processed ({window_label}): {processed}  |  Approved: {approved}")
         if processed:
-            lines.append(f"Searched: {searched} of {processed}")
+            # Hit rate when the attempted counter has data; plain usage otherwise
+            if attempted:
+                lines.append(f"Search Hits: {searched} of {attempted} attempted")
+            else:
+                lines.append(f"Searched: {searched} of {processed}")
+            directional_line = f"Directional: {directional} of {processed}"
+            if avg_edge is not None:
+                directional_line += f"  |  Avg Edge: {avg_edge * 100:+.1f}¢"
+            lines.append(directional_line)
+            approve_icon = "✅" if would_approve else "—"
+            lines.append(f"Would Approve (live rules): {would_approve} {approve_icon}")
         if avg_s is not None:
             lines.append(f"Avg Prediction: {avg_s / 60:.1f}m")
         if oldest is not None and carried > 0:

@@ -68,6 +68,9 @@ class PredictionResponse(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc)
     )
     search_context_used: bool = False
+    # True when a search was attempted, even if it returned no evidence —
+    # the gap between attempted and used is the SearXNG hit rate.
+    search_attempted: bool = False
     sources: list[str] = Field(default_factory=list)
 
 

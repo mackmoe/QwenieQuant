@@ -27,7 +27,8 @@ async def predict(request: PredictionRequest) -> PredictionResponse:
 
     # Deterministic search decision — model is never consulted.
     evidence: list[searxng.SearchResult] = []
-    if searxng.needs_search(request.question, request.category):
+    search_attempted = searxng.needs_search(request.question, request.category)
+    if search_attempted:
         logger.info(
             "question=%r category=%s search=required",
             request.question[:80],
@@ -75,6 +76,7 @@ async def predict(request: PredictionRequest) -> PredictionResponse:
         key_factors=llm_prediction.key_factors,
         model=settings.ollama_model,
         search_context_used=bool(evidence),
+        search_attempted=search_attempted,
         sources=sources,
     )
 

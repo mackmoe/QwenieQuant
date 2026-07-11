@@ -481,6 +481,8 @@ class TestActivityStats:
             "app.routes.postgres_module.fetch_activity_stats",
             new_callable=AsyncMock,
             return_value={"processed": 11, "approved": 2, "searched": 9,
+                          "search_attempted": 10, "directional": 4,
+                          "avg_edge_directional": 0.12, "would_approve": 1,
                           "avg_duration_seconds": 186.0},
         ):
             resp = tc.get("/stats/activity")
@@ -490,3 +492,32 @@ class TestActivityStats:
         assert data["approved"] == 2
         assert data["searched"] == 9
         assert data["avg_duration_seconds"] == 186.0
+
+
+class TestActivityStatsSignals:
+    def test_signal_fields_flow_through(self, tc):
+        mock_pool = MagicMock()
+        routes_module.set_dependencies(mock_pool, _settings())
+        with patch(
+            "app.routes.postgres_module.fetch_activity_stats",
+            new_callable=AsyncMock,
+            return_value={"processed": 11, "approved": 2, "searched": 9,
+                          "search_attempted": 10, "directional": 4,
+                          "avg_edge_directional": 0.12, "would_approve": 1,
+                          "avg_duration_seconds": 186.0},
+        ) as mock_fetch:
+            resp = tc.get("/stats/activity")
+        routes_module.set_dependencies(None, _settings())
+        data = resp.json()
+        assert data["search_attempted"] == 10
+        assert data["directional"] == 4
+        assert data["avg_edge_directional"] == 0.12
+        assert data["would_approve"] == 1
+        # min_directional_confidence threshold passed from settings
+        assert mock_fetch.call_args.kwargs["min_directional_confidence"] == pytest.approx(0.55)
+
+    def test_signal_fields_default_zero_without_pool(self, tc):
+        data = tc.get("/stats/activity").json()
+        assert data["directional"] == 0
+        assert data["would_approve"] == 0
+        assert data["avg_edge_directional"] is None

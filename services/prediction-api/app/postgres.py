@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS prediction.prediction_outcomes (
     FOREIGN KEY (prediction_id)
         REFERENCES prediction.prediction_requests (prediction_id)
 );
+
+ALTER TABLE prediction.prediction_responses
+    ADD COLUMN IF NOT EXISTS search_attempted BOOLEAN NOT NULL DEFAULT FALSE;
 """
 
 
@@ -143,8 +146,9 @@ async def persist_prediction(
                 INSERT INTO prediction.prediction_responses
                     (prediction_id, prediction, confidence, reasoning,
                      key_factors, model, execution_ms, search_used,
-                     memory_used, validation_status, response_payload)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                     search_attempted, memory_used, validation_status,
+                     response_payload)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 """,
                 response.prediction_id,
                 response.prediction,
@@ -154,6 +158,7 @@ async def persist_prediction(
                 response.model,
                 execution_ms,
                 response.search_context_used,
+                response.search_attempted,
                 False,
                 "valid",
                 _build_response_payload(response, calibration_result),

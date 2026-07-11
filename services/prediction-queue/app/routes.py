@@ -75,10 +75,18 @@ async def activity_stats(
     """
     from datetime import datetime, timezone
 
-    db_stats = {"processed": 0, "approved": 0, "searched": 0, "avg_duration_seconds": None}
+    db_stats = {
+        "processed": 0, "approved": 0, "searched": 0, "search_attempted": 0,
+        "directional": 0, "avg_edge_directional": None, "would_approve": 0,
+        "avg_duration_seconds": None,
+    }
     if _pool is not None:
         try:
-            db_stats = await postgres_module.fetch_activity_stats(_pool, window_minutes)
+            db_stats = await postgres_module.fetch_activity_stats(
+                _pool,
+                window_minutes,
+                min_directional_confidence=_settings.min_directional_confidence,
+            )
         except Exception:
             logger.exception("activity stats query failed")
 
@@ -96,6 +104,10 @@ async def activity_stats(
         processed=db_stats["processed"],
         approved=db_stats["approved"],
         searched=db_stats["searched"],
+        search_attempted=db_stats["search_attempted"],
+        directional=db_stats["directional"],
+        avg_edge_directional=db_stats["avg_edge_directional"],
+        would_approve=db_stats["would_approve"],
         avg_duration_seconds=db_stats["avg_duration_seconds"],
         queued_now=len(queued),
         in_progress_now=len(in_progress),

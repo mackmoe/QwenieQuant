@@ -87,7 +87,11 @@ class ActivityStats(BaseModel):
     window_minutes: int
     processed: int              # workflow results completed in the window
     approved: int               # risk-approved in the window
-    searched: int               # processed predictions that used SearXNG
+    searched: int               # processed predictions that used SearXNG evidence
+    search_attempted: int = 0   # predictions where a search was run (hit rate denominator)
+    directional: int = 0        # predictions where the model had a real opinion
+    avg_edge_directional: float | None = None  # mean claimed edge on directional predictions
+    would_approve: int = 0      # passed every risk check (ignores dry-run) — go-live readiness
     avg_duration_seconds: float | None = None
     queued_now: int
     in_progress_now: int

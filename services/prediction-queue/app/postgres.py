@@ -126,12 +126,19 @@ ON CONFLICT (result_id) DO NOTHING;
 """
 
 
-async def fetch_activity_stats(pool: asyncpg.Pool, window_minutes: int = 60) -> dict:
+async def fetch_activity_stats(
+    pool: asyncpg.Pool,
+    window_minutes: int = 60,
+    min_directional_confidence: float = 0.55,
+) -> dict:
     """
-    Workflow throughput over a trailing window, for operator dashboards.
+    Workflow throughput and signal quality over a trailing window.
 
-    searched joins prediction.prediction_responses (same PostgreSQL
-    instance) to report how many processed predictions used SearXNG.
+    Joins prediction.prediction_responses (same PostgreSQL instance) for
+    search stats.  would_approve counts predictions that passed every risk
+    check — the risk manager sets recommended_contracts only when all
+    checks pass, including in dry-run mode, so it doubles as the
+    "if this were real money" counter.
     """
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -139,17 +146,31 @@ async def fetch_activity_stats(pool: asyncpg.Pool, window_minutes: int = 60) -> 
             SELECT count(*)                                            AS processed,
                    count(*) FILTER (WHERE w.approved)                  AS approved,
                    count(*) FILTER (WHERE r.search_used)               AS searched,
+                   count(*) FILTER (WHERE r.search_attempted)          AS search_attempted,
+                   count(*) FILTER (WHERE w.confidence >= $2)          AS directional,
+                   round(avg(w.edge) FILTER (
+                       WHERE w.confidence >= $2 AND w.market_price IS NOT NULL
+                   )::numeric, 3)                                      AS avg_edge_directional,
+                   count(*) FILTER (
+                       WHERE w.approved
+                          OR (w.metadata->'risk_data'->>'recommended_contracts') IS NOT NULL
+                   )                                                   AS would_approve,
                    round(avg(w.duration_ms) / 1000.0, 1)               AS avg_duration_seconds
             FROM queue.workflow_results w
             LEFT JOIN prediction.prediction_responses r USING (prediction_id)
             WHERE w.executed_at > now() - make_interval(mins => $1)
             """,
             window_minutes,
+            min_directional_confidence,
         )
     return {
         "processed": row["processed"],
         "approved": row["approved"],
         "searched": row["searched"],
+        "search_attempted": row["search_attempted"],
+        "directional": row["directional"],
+        "avg_edge_directional": float(row["avg_edge_directional"]) if row["avg_edge_directional"] is not None else None,
+        "would_approve": row["would_approve"],
         "avg_duration_seconds": float(row["avg_duration_seconds"]) if row["avg_duration_seconds"] is not None else None,
     }
 

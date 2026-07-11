@@ -835,3 +835,50 @@ def test_format_notification_renders_by_category():
     )
     assert "Top Opportunity per Category" in result
     assert "Financials" in result
+
+
+# --- Activity signal-quality lines ---
+
+_ACTIVITY_SIGNALS = {
+    **_ACTIVITY_OK,
+    "search_attempted": 10,
+    "directional": 4,
+    "avg_edge_directional": 0.12,
+    "would_approve": 1,
+}
+
+
+def test_activity_shows_search_hit_rate_when_attempted_known():
+    text = "\n".join(_render_activity_lines(_OE_OK, _PQ_STATS, _ACTIVITY_SIGNALS))
+    assert "Search Hits: 9 of 10 attempted" in text
+
+
+def test_activity_shows_directional_and_edge():
+    text = "\n".join(_render_activity_lines(_OE_OK, _PQ_STATS, _ACTIVITY_SIGNALS))
+    assert "Directional: 4 of 11" in text
+    assert "Avg Edge: +12.0¢" in text
+
+
+def test_activity_shows_would_approve():
+    text = "\n".join(_render_activity_lines(_OE_OK, _PQ_STATS, _ACTIVITY_SIGNALS))
+    assert "Would Approve (live rules): 1 ✅" in text
+
+
+def test_activity_would_approve_zero_shows_dash():
+    stats = {**_ACTIVITY_SIGNALS, "would_approve": 0}
+    text = "\n".join(_render_activity_lines(_OE_OK, _PQ_STATS, stats))
+    assert "Would Approve (live rules): 0 —" in text
+
+
+def test_activity_falls_back_to_usage_without_attempted_counter():
+    # Old-era rows have search_attempted=0; show plain usage
+    text = "\n".join(_render_activity_lines(_OE_OK, _PQ_STATS, _ACTIVITY_OK))
+    assert "Searched: 9 of 11" in text
+    assert "attempted" not in text
+
+
+def test_activity_edge_line_absent_when_no_directional_edge():
+    stats = {**_ACTIVITY_SIGNALS, "avg_edge_directional": None}
+    text = "\n".join(_render_activity_lines(_OE_OK, _PQ_STATS, stats))
+    assert "Directional: 4 of 11" in text
+    assert "Avg Edge" not in text
