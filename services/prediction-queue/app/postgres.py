@@ -33,10 +33,13 @@ INSERT INTO queue.prediction_queue
     (queue_id, market_id, ticker, priority_score, effective_priority,
      queue_state, enqueue_time, expiration_time, last_updated, metadata)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
-ON CONFLICT (queue_id) DO UPDATE SET
+ON CONFLICT (market_id) DO UPDATE SET
+    queue_id           = EXCLUDED.queue_id,
+    ticker             = EXCLUDED.ticker,
     priority_score     = EXCLUDED.priority_score,
     effective_priority = EXCLUDED.effective_priority,
     queue_state        = EXCLUDED.queue_state,
+    enqueue_time       = EXCLUDED.enqueue_time,
     expiration_time    = EXCLUDED.expiration_time,
     last_updated       = EXCLUDED.last_updated,
     metadata           = EXCLUDED.metadata;
@@ -124,6 +127,31 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
         $17, $18, $19, $20::jsonb)
 ON CONFLICT (result_id) DO NOTHING;
 """
+
+
+async def has_recent_result(
+    pool: asyncpg.Pool,
+    market_id: str,
+    window_hours: int,
+) -> bool:
+    """
+    True when this market already has a workflow result inside the window.
+
+    Guards against re-predicting the same market after a restart wipes the
+    in-memory completed set — each duplicate costs ~4 minutes of inference.
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchval(
+            """
+            SELECT 1 FROM queue.workflow_results
+            WHERE market_id = $1
+              AND executed_at > now() - make_interval(hours => $2)
+            LIMIT 1
+            """,
+            market_id,
+            window_hours,
+        )
+    return row is not None
 
 
 async def fetch_activity_stats(

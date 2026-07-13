@@ -830,6 +830,8 @@ class TestEvPersistenceAndDirection:
             patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.60),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock,
                   return_value=_risk(approved=False)),
+            patch("app.workflow.postgres_module.has_recent_result",
+                  new_callable=AsyncMock, return_value=False),
             patch("app.workflow.postgres_module.persist_workflow_result", mock_persist),
         ):
             await wf.run_iteration(MagicMock(), MagicMock(), s)
@@ -849,6 +851,8 @@ class TestEvPersistenceAndDirection:
             patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=None),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock,
                   return_value=_risk(approved=False)),
+            patch("app.workflow.postgres_module.has_recent_result",
+                  new_callable=AsyncMock, return_value=False),
             patch("app.workflow.postgres_module.persist_workflow_result", mock_persist),
         ):
             await wf.run_iteration(MagicMock(), MagicMock(), s)
@@ -910,6 +914,8 @@ class TestNonDirectionalPredictions:
             patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.94),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock,
                   return_value=_risk(approved=False)),
+            patch("app.workflow.postgres_module.has_recent_result",
+                  new_callable=AsyncMock, return_value=False),
             patch("app.workflow.postgres_module.persist_workflow_result", mock_persist),
         ):
             await wf.run_iteration(MagicMock(), MagicMock(), s)
@@ -929,3 +935,65 @@ class TestNonDirectionalPredictions:
         ):
             await wf.run_iteration(None, MagicMock(), s)
         assert mock_rm.call_args.args[5] == pytest.approx(0.20)
+
+
+# ---------------------------------------------------------------------------
+# Tests: recently-predicted guard (restart-proof dedupe)
+# ---------------------------------------------------------------------------
+
+
+class TestRecentlyPredictedGuard:
+    async def test_recent_result_skips_without_calling_api(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-DUP", 80.0)], s)
+        mock_pred = AsyncMock(return_value=_pred())
+        with (
+            patch("app.workflow.postgres_module.has_recent_result",
+                  new_callable=AsyncMock, return_value=True),
+            patch("app.workflow._call_prediction_api", mock_pred),
+        ):
+            result = await wf.run_iteration(MagicMock(), MagicMock(), s)
+        mock_pred.assert_not_called()
+        assert result["status"] == "skipped"
+        assert result["reason"] == "recently_predicted"
+        entries = qm.get_queue()
+        assert entries[0].queue_state == QueueState.COMPLETED
+
+    async def test_no_recent_result_proceeds(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-NEW", 80.0)], s)
+        with (
+            patch("app.workflow.postgres_module.has_recent_result",
+                  new_callable=AsyncMock, return_value=False),
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
+            patch("app.workflow.postgres_module.persist_workflow_result", new_callable=AsyncMock),
+        ):
+            result = await wf.run_iteration(MagicMock(), MagicMock(), s)
+        assert result["status"] == "completed"
+
+    async def test_guard_check_failure_predicts_anyway(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-ERR", 80.0)], s)
+        with (
+            patch("app.workflow.postgres_module.has_recent_result",
+                  new_callable=AsyncMock, side_effect=Exception("db hiccup")),
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
+            patch("app.workflow.postgres_module.persist_workflow_result", new_callable=AsyncMock),
+        ):
+            result = await wf.run_iteration(MagicMock(), MagicMock(), s)
+        assert result["status"] == "completed"
+
+    async def test_no_pool_skips_guard(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-NP", 80.0)], s)
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
+        ):
+            result = await wf.run_iteration(None, MagicMock(), s)
+        assert result["status"] == "completed"

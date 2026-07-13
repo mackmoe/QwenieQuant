@@ -15,6 +15,8 @@ class Settings(BaseSettings):
 
     workflow_enabled: bool = True
     workflow_interval_seconds: int = 30
+    # Skip markets already predicted within this window (restart-proof dedupe)
+    recent_prediction_window_hours: int = 12
     # Below this confidence the model's answer carries no direction:
     # P(Yes) is treated as 0.5 and no edge is claimed against the market.
     min_directional_confidence: float = 0.55

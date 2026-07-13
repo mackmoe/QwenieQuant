@@ -161,7 +161,7 @@ async def _call_prediction_api(
             "options": ["Yes", "No"],
             "market_id": entry.market_id,
         },
-        timeout=330.0,  # qwen3:8b thinking chain can take up to 5 min on CPU
+        timeout=450.0,  # must exceed prediction-api ollama_timeout (420s)
     )
     resp.raise_for_status()
     return resp.json()
@@ -305,6 +305,33 @@ async def run_iteration(
                 "title": title,
                 "dry_run": settings.dry_run,
             }
+
+        # Step 1c — skip markets already predicted recently (restart-proof:
+        # the in-memory completed set dies with the process, but the
+        # workflow_results table does not).
+        if pool is not None:
+            try:
+                already_done = await postgres_module.has_recent_result(
+                    pool, entry.market_id, settings.recent_prediction_window_hours
+                )
+            except Exception:
+                logger.exception("recent-result check failed — predicting anyway")
+                already_done = False
+            if already_done:
+                logger.info(
+                    "recently_predicted_skipped market_id=%s window=%dh",
+                    entry.market_id,
+                    settings.recent_prediction_window_hours,
+                )
+                queue_module.mark_completed(entry.market_id)
+                return {
+                    "status": "skipped",
+                    "reason": "recently_predicted",
+                    "market_id": entry.market_id,
+                    "ticker": entry.ticker,
+                    "title": title,
+                    "dry_run": settings.dry_run,
+                }
 
         # Step 2 — get AI prediction
         logger.info("prediction_started market_id=%s", entry.market_id)

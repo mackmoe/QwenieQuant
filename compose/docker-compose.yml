@@ -28,6 +28,14 @@
 #   - No service is added "just in case" — see docs/DOCKER_ARCHITECTURE.md
 #     for why each one exists.
 
+# Applied to every service: without rotation Docker's json-file driver
+# grows container logs without bound (ollama hit 43MB in days).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 networks:
   # A single internal bridge network is enough for this platform's size.
   # Every service talks to every other service by container name; there is
@@ -57,6 +65,11 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
+    logging: *default-logging
+    environment:
+      # Keep the model resident across the hourly idle gap; the default
+      # 5m unload made the first prediction of each burst pay a CPU reload.
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-45m}
     networks:
       - internal
     ports:
@@ -83,6 +96,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: postgres
+    logging: *default-logging
     networks:
       - internal
     environment:
@@ -112,6 +126,7 @@ services:
   searxng:
     image: searxng/searxng:latest
     container_name: searxng
+    logging: *default-logging
     networks:
       - internal
     volumes:
@@ -134,6 +149,7 @@ services:
   prediction-api:
     build: ../services/prediction-api
     container_name: prediction-api
+    logging: *default-logging
     networks:
       - internal
     ports:
@@ -168,6 +184,7 @@ services:
   learning-engine:
     build: ../services/learning-engine
     container_name: learning-engine
+    logging: *default-logging
     networks:
       - internal
     ports:
@@ -194,6 +211,7 @@ services:
   reflection-engine:
     build: ../services/reflection-engine
     container_name: reflection-engine
+    logging: *default-logging
     networks:
       - internal
     ports:
@@ -222,6 +240,7 @@ services:
   discord-control:
     build: ../services/discord-control
     container_name: discord-control
+    logging: *default-logging
     networks:
       - internal
     depends_on:
@@ -265,6 +284,7 @@ services:
   kalshi-connector:
     build: ../services/kalshi-connector
     container_name: kalshi-connector
+    logging: *default-logging
     networks:
       - internal
     ports:
@@ -302,6 +322,7 @@ services:
   risk-manager:
     build: ../services/risk-manager
     container_name: risk-manager
+    logging: *default-logging
     networks:
       - internal
     ports:
@@ -340,6 +361,7 @@ services:
   prediction-queue:
     build: ../services/prediction-queue
     container_name: prediction-queue
+    logging: *default-logging
     networks:
       - internal
     ports:
@@ -381,6 +403,7 @@ services:
   opportunity-engine:
     build: ../services/opportunity-engine
     container_name: opportunity-engine
+    logging: *default-logging
     networks:
       - internal
     ports:

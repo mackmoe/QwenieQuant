@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     ollama_embed_model: str = "nomic-embed-text"
     # qwen3:8b generates a thinking chain before the JSON response; at ~3 tok/s
     # on CPU this can run 2-4 minutes before the first byte is returned.
-    ollama_timeout: int = 300
+    ollama_timeout: int = 420
 
     searxng_url: str = "http://searxng:8080"
     searxng_timeout: float = 10.0
