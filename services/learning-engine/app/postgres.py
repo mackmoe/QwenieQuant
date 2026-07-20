@@ -5,6 +5,7 @@ Reads prediction history from the `prediction` schema (owned by
 prediction-api). Writes learning summaries to the `learning` schema.
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -18,6 +19,39 @@ from app.models import AnalysisSummary
 logger = logging.getLogger(__name__)
 
 _pool: asyncpg.Pool | None = None
+
+_POOL_CONNECT_MAX_ATTEMPTS = 5
+_POOL_CONNECT_INITIAL_DELAY = 2.0
+
+
+async def _create_pool_with_retry(url: str, **pool_kwargs) -> asyncpg.Pool:
+    """
+    Create the connection pool, retrying transient startup failures.
+
+    Postgres's pg_isready healthcheck can report "accepting connections" a
+    moment before the server is ready for new sessions (error 57P03, "the
+    database system is starting up") — a real race during container
+    restarts.  Without this, that momentary lag permanently disables this
+    service's database access until someone notices and restarts it by
+    hand.  Retries with exponential backoff (2s, 4s, 8s, 16s ~ 30s total)
+    before giving up.
+    """
+    delay = _POOL_CONNECT_INITIAL_DELAY
+    last_exc: Exception | None = None
+    for attempt in range(1, _POOL_CONNECT_MAX_ATTEMPTS + 1):
+        try:
+            return await asyncpg.create_pool(url, **pool_kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if attempt == _POOL_CONNECT_MAX_ATTEMPTS:
+                break
+            logger.warning(
+                "PostgreSQL connection attempt %d/%d failed: %s — retrying in %.0fs",
+                attempt, _POOL_CONNECT_MAX_ATTEMPTS, exc, delay,
+            )
+            await asyncio.sleep(delay)
+            delay *= 2
+    raise last_exc
 
 _CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS learning.learning_summaries (
@@ -56,7 +90,7 @@ async def startup() -> None:
         logger.warning("POSTGRES_URL not set; database disabled")
         return
     try:
-        _pool = await asyncpg.create_pool(
+        _pool = await _create_pool_with_retry(
             settings.postgres_url,
             init=_init_connection,
             min_size=1,

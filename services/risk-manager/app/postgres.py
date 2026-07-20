@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Optional
@@ -5,6 +6,39 @@ from typing import Optional
 import asyncpg
 
 logger = logging.getLogger(__name__)
+
+_POOL_CONNECT_MAX_ATTEMPTS = 5
+_POOL_CONNECT_INITIAL_DELAY = 2.0
+
+
+async def _create_pool_with_retry(url: str, **pool_kwargs) -> asyncpg.Pool:
+    """
+    Create the connection pool, retrying transient startup failures.
+
+    Postgres's pg_isready healthcheck can report "accepting connections" a
+    moment before the server is ready for new sessions (error 57P03, "the
+    database system is starting up") — a real race during container
+    restarts.  Without this, that momentary lag permanently disables this
+    service's database access until someone notices and restarts it by
+    hand.  Retries with exponential backoff (2s, 4s, 8s, 16s ~ 30s total)
+    before giving up.
+    """
+    delay = _POOL_CONNECT_INITIAL_DELAY
+    last_exc: Exception | None = None
+    for attempt in range(1, _POOL_CONNECT_MAX_ATTEMPTS + 1):
+        try:
+            return await asyncpg.create_pool(url, **pool_kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if attempt == _POOL_CONNECT_MAX_ATTEMPTS:
+                break
+            logger.warning(
+                "PostgreSQL connection attempt %d/%d failed: %s — retrying in %.0fs",
+                attempt, _POOL_CONNECT_MAX_ATTEMPTS, exc, delay,
+            )
+            await asyncio.sleep(delay)
+            delay *= 2
+    raise last_exc
 
 _CREATE_TABLES = """
 CREATE SCHEMA IF NOT EXISTS risk;
@@ -36,7 +70,7 @@ async def init_pool(url: str) -> Optional[asyncpg.Pool]:
     if not url:
         return None
     try:
-        pool = await asyncpg.create_pool(
+        pool = await _create_pool_with_retry(
             url, min_size=1, max_size=5, init=_register_codecs
         )
         async with pool.acquire() as conn:

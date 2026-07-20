@@ -2,9 +2,46 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 
 import asyncpg
+
+logger = logging.getLogger(__name__)
+
+_POOL_CONNECT_MAX_ATTEMPTS = 5
+_POOL_CONNECT_INITIAL_DELAY = 2.0
+
+
+async def _create_pool_with_retry(url: str, **pool_kwargs) -> asyncpg.Pool:
+    """
+    Create the connection pool, retrying transient startup failures.
+
+    Postgres's pg_isready healthcheck can report "accepting connections" a
+    moment before the server is ready for new sessions (error 57P03, "the
+    database system is starting up") — a real race during container
+    restarts.  Without this, a container restart during that window fails
+    the FastAPI lifespan startup outright.  Retries with exponential
+    backoff (2s, 4s, 8s, 16s ~ 30s total) before giving up.
+    """
+    delay = _POOL_CONNECT_INITIAL_DELAY
+    last_exc: Exception | None = None
+    for attempt in range(1, _POOL_CONNECT_MAX_ATTEMPTS + 1):
+        try:
+            return await asyncpg.create_pool(url, **pool_kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if attempt == _POOL_CONNECT_MAX_ATTEMPTS:
+                break
+            logger.warning(
+                "PostgreSQL connection attempt %d/%d failed: %s — retrying in %.0fs",
+                attempt, _POOL_CONNECT_MAX_ATTEMPTS, exc, delay,
+            )
+            await asyncio.sleep(delay)
+            delay *= 2
+    raise last_exc
+
 
 _CREATE_SCHEMA = "CREATE SCHEMA IF NOT EXISTS queue;"
 
@@ -47,7 +84,7 @@ ON CONFLICT (market_id) DO UPDATE SET
 
 
 async def init_pool(url: str) -> asyncpg.Pool:
-    pool = await asyncpg.create_pool(url, min_size=1, max_size=5)
+    pool = await _create_pool_with_retry(url, min_size=1, max_size=5)
     async with pool.acquire() as conn:
         await conn.execute(_CREATE_SCHEMA)
         await conn.execute(_CREATE_TABLE)
