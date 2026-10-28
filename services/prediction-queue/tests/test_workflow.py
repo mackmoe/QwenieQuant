@@ -51,6 +51,11 @@ def _opp(market_id: str, score: float, **meta) -> AddOpportunity:
     )
 
 
+def _quotes(yes_ask: int) -> dict:
+    """Synthetic executable quotes with a zero-spread midpoint for old tests."""
+    return {"mid": yes_ask / 100, "yes_ask_cents": yes_ask, "no_ask_cents": 100 - yes_ask}
+
+
 def _pred(**kwargs) -> dict:
     d = dict(
         prediction_id="pred_test_001",
@@ -150,7 +155,7 @@ class TestRunIteration:
 
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
         ):
             await wf.run_iteration(None, MagicMock(), s)
@@ -179,7 +184,7 @@ class TestRunIteration:
 
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch(
                 "app.workflow._call_risk_manager",
                 new_callable=AsyncMock,
@@ -197,7 +202,7 @@ class TestRunIteration:
 
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
         ):
             await wf.run_iteration(None, MagicMock(), s)
@@ -212,7 +217,7 @@ class TestRunIteration:
         mock_execute = AsyncMock(return_value=_order())
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=True)),
             patch("app.workflow._execute_trade", mock_execute),
         ):
@@ -229,7 +234,7 @@ class TestRunIteration:
         mock_execute = AsyncMock(return_value=_order())
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=True)),
             patch("app.workflow._execute_trade", mock_execute),
         ):
@@ -245,7 +250,7 @@ class TestRunIteration:
 
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=True)),
             patch("app.workflow._execute_trade", new_callable=AsyncMock, return_value=None),
         ):
@@ -297,7 +302,7 @@ class TestRunIteration:
         mock_pool = MagicMock()
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
             patch(
                 "app.workflow.postgres_module.persist_workflow_result",
@@ -317,7 +322,7 @@ class TestRunIteration:
 
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
         ):
             await wf.run_iteration(None, MagicMock(), s)
@@ -331,7 +336,7 @@ class TestRunIteration:
         mock_execute = AsyncMock(return_value=_order())
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred(prediction="Yes", confidence=0.85)),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=True)),
             patch("app.workflow._execute_trade", mock_execute),
         ):
@@ -347,7 +352,7 @@ class TestRunIteration:
         mock_execute = AsyncMock(return_value=_order())
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred(prediction="No", confidence=0.85)),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=True)),
             patch("app.workflow._execute_trade", mock_execute),
         ):
@@ -369,7 +374,7 @@ class TestRunIteration:
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
                   return_value=_pred(prediction="No", confidence=0.80)),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.60),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(60)),
             patch("app.workflow._call_risk_manager", mock_rm),
         ):
             await wf.run_iteration(None, MagicMock(), s)
@@ -380,7 +385,7 @@ class TestRunIteration:
         assert probability_arg == pytest.approx(0.80)
         # ev passed = market_price - P(Yes) = 0.60 - 0.20 = 0.40 (positive)
         ev_arg = call_kwargs.args[5]
-        assert ev_arg == pytest.approx(0.40)
+        assert ev_arg == pytest.approx(0.38)  # 40c gross edge less 2c estimated fee
 
     async def test_yes_trade_ev_computed_from_yes_perspective(self):
         # When model predicts "Yes" (confidence=0.80 → probability=0.80),
@@ -393,7 +398,7 @@ class TestRunIteration:
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
                   return_value=_pred(prediction="Yes", confidence=0.80)),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.60),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(60)),
             patch("app.workflow._call_risk_manager", mock_rm),
         ):
             await wf.run_iteration(None, MagicMock(), s)
@@ -402,7 +407,7 @@ class TestRunIteration:
         probability_arg = call_kwargs.args[3]
         assert probability_arg == pytest.approx(0.80)
         ev_arg = call_kwargs.args[5]
-        assert ev_arg == pytest.approx(0.20)
+        assert ev_arg == pytest.approx(0.18)  # 20c gross edge less 2c estimated fee
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +426,7 @@ class TestRunIterationReturnValues:
         qm.add_or_update([_opp("MKT-1", 80.0)], s)
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
         ):
             result = await wf.run_iteration(None, MagicMock(), s)
@@ -449,7 +454,7 @@ class TestRunIterationReturnValues:
         qm.add_or_update([_opp("MKT-1", 80.0)], s)
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch(
                 "app.workflow._call_risk_manager",
                 new_callable=AsyncMock,
@@ -481,7 +486,7 @@ class TestRunIterationReturnValues:
         qm.add_or_update([_opp("MKT-1", 80.0)], s)
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
         ):
             result = await wf.run_iteration(None, MagicMock(), s)
@@ -499,7 +504,7 @@ class TestRunExclusive:
         qm.add_or_update([_opp("MKT-1", 80.0)], s)
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
         ):
             await wf.run_exclusive(None, MagicMock(), s)
@@ -521,7 +526,7 @@ class TestRunExclusive:
         s = _settings()
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
         ):
             await wf.run_exclusive(None, MagicMock(), s)
@@ -565,7 +570,7 @@ class TestRunManual:
         qm.add_or_update([_opp("MKT-1", 80.0)], s)
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
         ):
             result = await wf.run_manual(None, MagicMock(), s)
@@ -576,7 +581,7 @@ class TestRunManual:
         s = _settings()
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
         ):
             await wf.run_manual(None, MagicMock(), s)
@@ -597,7 +602,7 @@ class TestRunManual:
         async def race():
             with (
                 patch("app.workflow._call_prediction_api", new_callable=AsyncMock, side_effect=slow_predict),
-                patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+                patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
                 patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
             ):
                 qm.add_or_update([_opp("MKT-1", 80.0)], s)
@@ -751,7 +756,7 @@ class TestMultiOutcomeSkip:
         mock_pred = AsyncMock(return_value=_pred())
         with (
             patch("app.workflow._call_prediction_api", mock_pred),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
         ):
             result = await wf.run_iteration(None, MagicMock(), s)
@@ -770,7 +775,7 @@ class TestMultiOutcomeSkip:
         mock_pred = AsyncMock(return_value=_pred())
         with (
             patch("app.workflow._call_prediction_api", mock_pred),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
         ):
             result = await wf.run_iteration(None, MagicMock(), s)
@@ -801,7 +806,7 @@ class TestEvPersistenceAndDirection:
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
                   return_value=_pred(prediction="Yes", confidence=0.65)),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", mock_rm),
         ):
             await wf.run_iteration(None, MagicMock(), s)
@@ -814,7 +819,7 @@ class TestEvPersistenceAndDirection:
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
                   return_value=_pred(prediction="No", confidence=0.80)),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", mock_rm),
         ):
             await wf.run_iteration(None, MagicMock(), s)
@@ -827,7 +832,7 @@ class TestEvPersistenceAndDirection:
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
                   return_value=_pred(prediction="Yes", confidence=0.80)),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.60),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(60)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock,
                   return_value=_risk(approved=False)),
             patch("app.workflow.postgres_module.has_recent_result",
@@ -838,7 +843,7 @@ class TestEvPersistenceAndDirection:
         kwargs = mock_persist.call_args.kwargs
         assert kwargs["market_price"] == pytest.approx(0.60)
         # Yes @ 0.80 conf vs 0.60 market → EV = 0.80 - 0.60 = 0.20
-        assert kwargs["expected_value"] == pytest.approx(0.20)
+        assert kwargs["expected_value"] == pytest.approx(0.18)
         assert kwargs["edge"] == pytest.approx(0.20)
         assert kwargs["side"] == "yes"
 
@@ -895,7 +900,7 @@ class TestNonDirectionalPredictions:
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
                   return_value=_pred(prediction="No", confidence=0.47)),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.09),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(9)),
             patch("app.workflow._call_risk_manager", mock_rm),
         ):
             await wf.run_iteration(None, MagicMock(), s)
@@ -911,7 +916,7 @@ class TestNonDirectionalPredictions:
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
                   return_value=_pred(prediction="No", confidence=0.40)),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.94),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(94)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock,
                   return_value=_risk(approved=False)),
             patch("app.workflow.postgres_module.has_recent_result",
@@ -930,11 +935,11 @@ class TestNonDirectionalPredictions:
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
                   return_value=_pred(prediction="Yes", confidence=0.80)),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.60),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(60)),
             patch("app.workflow._call_risk_manager", mock_rm),
         ):
             await wf.run_iteration(None, MagicMock(), s)
-        assert mock_rm.call_args.args[5] == pytest.approx(0.20)
+        assert mock_rm.call_args.args[5] == pytest.approx(0.18)
 
 
 # ---------------------------------------------------------------------------
@@ -966,7 +971,7 @@ class TestRecentlyPredictedGuard:
             patch("app.workflow.postgres_module.has_recent_result",
                   new_callable=AsyncMock, return_value=False),
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
             patch("app.workflow.postgres_module.persist_workflow_result", new_callable=AsyncMock),
         ):
@@ -980,7 +985,7 @@ class TestRecentlyPredictedGuard:
             patch("app.workflow.postgres_module.has_recent_result",
                   new_callable=AsyncMock, side_effect=Exception("db hiccup")),
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
             patch("app.workflow.postgres_module.persist_workflow_result", new_callable=AsyncMock),
         ):
@@ -992,8 +997,65 @@ class TestRecentlyPredictedGuard:
         qm.add_or_update([_opp("MKT-NP", 80.0)], s)
         with (
             patch("app.workflow._call_prediction_api", new_callable=AsyncMock, return_value=_pred()),
-            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=0.45),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=_quotes(45)),
             patch("app.workflow._call_risk_manager", new_callable=AsyncMock, return_value=_risk(approved=False)),
         ):
             result = await wf.run_iteration(None, MagicMock(), s)
         assert result["status"] == "completed"
+
+
+class TestQuoteAwareProfitability:
+    async def test_buying_at_ask_uses_net_ev_not_mid(self):
+        s = _settings()
+        qm.add_or_update([_opp("MKT-QUOTE", 80.0)], s)
+        rm = AsyncMock(return_value=_risk(approved=False))
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
+                  return_value=_pred(confidence=0.70)),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock,
+                  return_value={"mid": 0.50, "yes_ask_cents": 65, "no_ask_cents": 55}),
+            patch("app.workflow._call_risk_manager", rm),
+        ):
+            await wf.run_iteration(None, MagicMock(), s)
+        args = rm.call_args.args
+        assert args[5] == pytest.approx(0.03)  # 70 - 65 - 2 fee
+        assert args[6] == pytest.approx(0.05)  # gross edge
+        assert rm.call_args.kwargs["quoted_ask_cents"] == 65
+
+    async def test_missing_quote_never_executes_even_if_risk_mock_approves(self):
+        s = _settings(dry_run=False)
+        qm.add_or_update([_opp("MKT-UNQUOTED", 80.0)], s)
+        trade = AsyncMock(return_value=_order())
+        with (
+            patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
+                  return_value=_pred()),
+            patch("app.workflow._fetch_market_price", new_callable=AsyncMock, return_value=None),
+            patch("app.workflow._call_risk_manager", new_callable=AsyncMock,
+                  return_value=_risk(approved=True)),
+            patch("app.workflow._execute_trade", trade),
+        ):
+            result = await wf.run_iteration(None, MagicMock(), s)
+        trade.assert_not_called()
+        assert result["trade_status"] == "rejected"
+
+    async def test_fetch_uses_side_specific_ask_and_no_fallback(self):
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"yes_bid": 40, "yes_ask": 65}
+        http = MagicMock()
+        http.get = AsyncMock(return_value=mock_resp)
+        quote = await wf._fetch_market_price(http, _settings(), "MKT-1")
+        assert quote["yes_ask_cents"] == 65
+        assert quote["no_ask_cents"] == 60  # complement of YES bid
+        assert quote["mid"] == pytest.approx(0.525)
+
+    async def test_no_valid_ask_returns_none(self):
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"yes_bid": None, "yes_ask": 0, "no_ask": None}
+        http = MagicMock()
+        http.get = AsyncMock(return_value=mock_resp)
+        assert await wf._fetch_market_price(http, _settings(), "MKT-1") is None
+
+    def test_fee_rounding_and_override(self):
+        assert wf.estimate_taker_fee_cents(50) == 2
+        assert wf.estimate_taker_fee_cents(5) == 1
+        assert wf.estimate_taker_fee_cents(50, 0.0) == 0
