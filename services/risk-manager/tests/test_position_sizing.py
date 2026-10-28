@@ -1,6 +1,6 @@
 import pytest
 
-from app.position_sizing import calculate_contracts, calculate_max_price
+from app.position_sizing import calculate_contracts, calculate_max_price, estimate_taker_fee_cents
 
 
 # ── calculate_max_price ─────────────────────────────────────────────────────
@@ -89,3 +89,14 @@ def test_calculate_contracts_exact_allocation():
 def test_calculate_contracts_returns_integer():
     result = calculate_contracts(100_000, 55, 5.0)
     assert isinstance(result, int)
+
+
+def test_taker_fee_rounds_up_per_contract():
+    assert estimate_taker_fee_cents(50) == 2
+    assert estimate_taker_fee_cents(5) == 1
+    assert estimate_taker_fee_cents(50, rate=0) == 0
+
+
+def test_position_sizing_counts_estimated_fee():
+    assert calculate_contracts(1000, 50, 5.0) == 1
+    assert calculate_contracts(1000, 50, 5.0, fee_cents=2) == 0
