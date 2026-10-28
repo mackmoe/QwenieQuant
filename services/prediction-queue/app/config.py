@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     # P(Yes) is treated as 0.5 and no edge is claimed against the market.
     min_directional_confidence: float = 0.55
     dry_run: bool = True
+    # Standard Kalshi taker fee rate; set higher for series with special fees.
+    taker_fee_rate: float = 0.07
     prediction_api_url: str = "http://prediction-api:8000"
     risk_manager_url: str = "http://risk-manager:8004"
     kalshi_connector_url: str = "http://kalshi-connector:8003"
