@@ -21,7 +21,7 @@ LOG = logging.getLogger("diagnostics_bridge")
 GITHUB_API = "https://api.github.com"
 REPORT_PATH = "reports/qweniequant/latest.json"
 MAX_RESPONSE_BYTES = 65536
-INTERVAL_SECONDS = 900
+INTERVAL_SECONDS = 60
 SERVICE_ENDPOINTS = {
     "prediction_api": "http://prediction-api:8000/health",
     "learning_engine": "http://learning-engine:8001/health",
@@ -35,6 +35,7 @@ SERVICE_ENDPOINTS = {
 }
 QUEUE_STATS_URL = "http://prediction-queue:8006/queue?limit=1"
 ACTIVITY_URL = "http://prediction-queue:8006/stats/activity?window_minutes=60"
+WORKFLOW_DIAGNOSTICS_URL = "http://prediction-queue:8006/stats/diagnostics"
 
 
 class _NoRedirect(request.HTTPRedirectHandler):
@@ -84,6 +85,57 @@ def _boolean(data: dict, field: str) -> bool | None:
     return value if type(value) is bool else None
 
 
+SAFE_RISK_CHECKS = frozenset({
+    "confidence", "expected_value", "edge", "open_positions", "daily_loss",
+    "bankroll", "consecutive_losses", "executable_quote", "direction_bias",
+})
+TRADE_STATUSES = frozenset({"rejected", "dry_run", "executed", "execution_failed", "unknown"})
+
+
+def _safe_workflow(data: dict) -> dict:
+    """Resanitize even trusted internal API responses before private publish."""
+    latest = data.get("latest_recorded")
+    if not isinstance(latest, dict):
+        latest = None
+    clean = None
+    if latest is not None:
+        reasons = latest.get("failed_risk_checks")
+        reasons = (
+            [v for v in reasons if type(v) is str and v in SAFE_RISK_CHECKS][:9]
+            if isinstance(reasons, list) else None
+        )
+        status = latest.get("trade_status")
+        timestamp = latest.get("completed_at_utc")
+        if isinstance(timestamp, str) and len(timestamp) <= 40:
+            try:
+                parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                timestamp = parsed.astimezone(timezone.utc).isoformat(timespec="seconds") if parsed.tzinfo else None
+            except ValueError:
+                timestamp = None
+        else:
+            timestamp = None
+        clean = {
+            "completed_at_utc": timestamp,
+            "trade_status": status if status in TRADE_STATUSES else None,
+            "side": latest.get("side") if latest.get("side") in ("yes", "no") else None,
+            "confidence": _fraction(latest, "confidence"),
+            "gross_edge": _fraction(latest, "gross_edge"),
+            "estimated_net_ev": _fraction(latest, "estimated_net_ev"),
+            "quoted_ask_cents": _counter(latest, "quoted_ask_cents"),
+            "estimated_taker_fee_cents": _counter(latest, "estimated_taker_fee_cents"),
+            "risk_approved": _boolean(latest, "risk_approved"),
+            "passed_all_risk_checks": _boolean(latest, "passed_all_risk_checks"),
+            "failed_risk_checks": reasons,
+            "dry_run": _boolean(latest, "dry_run"),
+        }
+    return {
+        "available": data.get("state") == "ready",
+        "queued_now": _counter(data, "queued_now"),
+        "in_progress_now": _counter(data, "in_progress_now"),
+        "latest_recorded": clean,
+    }
+
+
 def _get_safe(url: str) -> dict:
     try:
         return _request_json(url)
@@ -119,11 +171,13 @@ def build_report() -> dict:
     kalshi = raw["kalshi_connector"]
     risk = raw["risk_manager"]
     opportunity = raw["opportunity_engine"]
+    workflow = _get_safe(WORKFLOW_DIAGNOSTICS_URL)
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "services": services,
+        "workflow": _safe_workflow(workflow),
         "queue": {
             "active": _counter(queue, "active"),
             "by_state": state_counts,
