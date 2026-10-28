@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class EvaluationRequest(BaseModel):
@@ -14,6 +14,9 @@ class EvaluationRequest(BaseModel):
     # Model's predicted direction ("yes"/"no").  Optional for backward
     # compatibility; when omitted the direction-bias check passes.
     prediction_direction: Optional[str] = None
+    # Executable quote for the direction being purchased, in cents.
+    # None is treated as unavailable and cannot authorize a trade.
+    quoted_ask_cents: Optional[int] = Field(default=None, ge=1, le=99)
 
     @field_validator("probability", "confidence")
     @classmethod
@@ -32,6 +35,7 @@ class RiskChecks(BaseModel):
     bankroll: bool = True
     consecutive_losses: bool = True
     direction_bias: bool = True
+    executable_quote: bool = True
 
 
 class EvaluationResponse(BaseModel):
