@@ -5,6 +5,7 @@ reasons, order details, or the Kalshi account. Only enumerated data leaves here.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from math import isfinite
 
@@ -78,6 +79,14 @@ async def fetch_latest_record(pool) -> dict | None:
     if row is None:
         return None
     result = dict(row)
+    # Asyncpg returns JSONB as text unless a custom JSON codec is installed.
+    # Never emit arbitrary JSON. Only known boolean risk checks are retained.
+    checks_text = result.get("risk_checks")
+    if isinstance(checks_text, str):
+        try:
+            result["risk_checks"] = json.loads(checks_text) if len(checks_text) <= 2048 else None
+        except (ValueError, TypeError):
+            result["risk_checks"] = None
     # Cast numeric strings only when syntactically exact. No arbitrary
     # metadata objects or free-form errors are passed to the response.
     for source, target in (
