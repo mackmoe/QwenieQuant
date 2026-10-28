@@ -431,3 +431,27 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+  # --- Optional read-only diagnostics snapshot reporter ---
+  # Sends allowlisted health and activity COUNTS only to a separate PRIVATE
+  # GitHub repository. Not started with the normal stack. No host port,
+  # Discord token, Kalshi key, trading access, or Docker socket.
+  diagnostics-bridge:
+    profiles: ["diagnostics"]
+    image: python:3.12-alpine
+    container_name: diagnostics-bridge
+    logging: *default-logging
+    networks:
+      - internal
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ../services/diagnostics-bridge:/app:ro
+      - ./keys/diagnostics_github_token:/run/secrets/github_token:ro
+    environment:
+      DIAG_PRIVATE_REPO: ${DIAG_PRIVATE_REPO:-}
+      DIAG_GITHUB_TOKEN_FILE: /run/secrets/github_token
+    command: ["python", "-u", "/app/bridge.py"]
+    restart: unless-stopped
