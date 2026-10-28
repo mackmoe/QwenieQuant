@@ -78,7 +78,7 @@ def _risk(approved: bool = True, **kwargs) -> dict:
         approved=approved,
         reason="ok" if approved else "low confidence",
         recommended_contracts=5 if approved else None,
-        recommended_max_price=50 if approved else None,
+        recommended_max_price=45 if approved else None,
         risk_checks=dict(
             confidence=True, expected_value=True, edge=True,
             open_positions=True, daily_loss=True, bankroll=True,
@@ -1059,3 +1059,39 @@ class TestQuoteAwareProfitability:
         assert wf.estimate_taker_fee_cents(50) == 2
         assert wf.estimate_taker_fee_cents(5) == 1
         assert wf.estimate_taker_fee_cents(50, 0.0) == 0
+
+
+async def test_approved_limit_above_evaluated_ask_never_executes():
+    s = _settings(dry_run=False)
+    qm.add_or_update([_opp("MKT-BAD-PRICE", 80.0)], s)
+    mock_trade = AsyncMock(return_value=_order())
+    with (
+        patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
+              return_value=_pred()),
+        patch("app.workflow._fetch_market_price", new_callable=AsyncMock,
+              return_value=_quotes(45)),
+        patch("app.workflow._call_risk_manager", new_callable=AsyncMock,
+              return_value=_risk(approved=True, recommended_max_price=60)),
+        patch("app.workflow._execute_trade", mock_trade),
+    ):
+        result = await wf.run_iteration(None, MagicMock(), s)
+    mock_trade.assert_not_called()
+    assert result["trade_status"] == "rejected"
+
+
+async def test_missing_recommended_quantity_never_executes():
+    s = _settings(dry_run=False)
+    qm.add_or_update([_opp("MKT-BAD-COUNT", 80.0)], s)
+    mock_trade = AsyncMock(return_value=_order())
+    with (
+        patch("app.workflow._call_prediction_api", new_callable=AsyncMock,
+              return_value=_pred()),
+        patch("app.workflow._fetch_market_price", new_callable=AsyncMock,
+              return_value=_quotes(45)),
+        patch("app.workflow._call_risk_manager", new_callable=AsyncMock,
+              return_value=_risk(approved=True, recommended_contracts=None)),
+        patch("app.workflow._execute_trade", mock_trade),
+    ):
+        result = await wf.run_iteration(None, MagicMock(), s)
+    mock_trade.assert_not_called()
+    assert result["trade_status"] == "rejected"
