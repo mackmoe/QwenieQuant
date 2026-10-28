@@ -464,9 +464,21 @@ async def run_iteration(
         approved = bool(risk_data.get("approved", False))
         risk_reason = risk_data.get("reason", "")
         # Defense in depth: never place an order when the buy quote is unknown.
-        if quoted_ask_cents is None and approved:
-            approved = False
-            risk_reason = "No executable ask quote available"
+        if approved:
+            # Risk Manager's response must never increase exposure above the
+            # ask used for EV or invent fallback price / quantity values.
+            try:
+                limit_cents = int(recommended_price)
+                quantity = int(recommended_contracts)
+            except (ValueError, TypeError):
+                limit_cents, quantity = 0, 0
+            if (
+                quoted_ask_cents is None
+                or not 1 <= limit_cents <= quoted_ask_cents
+                or quantity < 1
+            ):
+                approved = False
+                risk_reason = "Unsafe or missing executable limit/quantity"
         recommended_contracts = risk_data.get("recommended_contracts")
         recommended_price = risk_data.get("recommended_max_price")
 
@@ -487,8 +499,8 @@ async def run_iteration(
                 logger.info("trade_skipped_dry_run market_id=%s", entry.market_id)
             else:
                 logger.info("trade_approved market_id=%s", entry.market_id)
-                qty = int(recommended_contracts) if recommended_contracts else 1
-                price = int(recommended_price) if recommended_price else max(1, int(trade_probability * 100))
+                qty = quantity
+                price = limit_cents
                 order_data = await _execute_trade(
                     http, settings, entry.ticker, side, qty, price
                 )
