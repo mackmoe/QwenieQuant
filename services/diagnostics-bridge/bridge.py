@@ -116,8 +116,8 @@ def _safe_workflow(data: dict) -> dict:
             timestamp = None
         clean = {
             "completed_at_utc": timestamp,
-            "trade_status": status if status in TRADE_STATUSES else None,
-            "side": latest.get("side") if latest.get("side") in ("yes", "no") else None,
+            "trade_status": status if isinstance(status, str) and status in TRADE_STATUSES else None,
+            "side": latest.get("side") if isinstance(latest.get("side"), str) and latest.get("side") in ("yes", "no") else None,
             "confidence": _fraction(latest, "confidence"),
             "gross_edge": _fraction(latest, "gross_edge"),
             "estimated_net_ev": _fraction(latest, "estimated_net_ev"),
