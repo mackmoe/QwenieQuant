@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re as _re
 import time
 import uuid
@@ -167,26 +168,60 @@ async def _call_prediction_api(
     return resp.json()
 
 
+def estimate_taker_fee_cents(price_cents: int, rate: float = 0.07) -> int:
+    """One-contract estimated taker fee, rounded up to the nearest cent.
+
+    The standard Kalshi formula is ceil(rate * quantity * price * (1-price)).
+    Use one-contract rounding as a conservative per-contract estimate.
+    Special market/series rates must be configured separately.
+    """
+    if not 1 <= price_cents <= 99 or not 0 <= rate <= 1:
+        raise ValueError("Invalid contract price or fee rate")
+    p = price_cents / 100.0
+    return math.ceil(100 * rate * p * (1 - p) - 1e-9)
+
+
 async def _fetch_market_price(
     http: httpx.AsyncClient,
     settings: Settings,
     ticker: str,
-) -> float | None:
+) -> dict | None:
+    """Fetch actionable YES/NO ask quotes; keep midpoint only for reporting.
+
+    Never substitute a bid/ask midpoint for the price a buyer must pay.
+    Missing or invalid ask quotes are not executable opportunities.
+    """
     try:
         resp = await http.get(
             f"{settings.kalshi_connector_url}/market/{ticker}",
             timeout=10.0,
         )
-        if resp.status_code == 200:
-            data = resp.json()
-            yes_bid = data.get("yes_bid") or 0
-            yes_ask = data.get("yes_ask") or 0
-            if yes_bid and yes_ask:
-                return (yes_bid + yes_ask) / 2.0 / 100.0
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        yes_bid = data.get("yes_bid")
+        yes_ask = data.get("yes_ask")
+        no_ask = data.get("no_ask")
+        # The NO ask can also be inferred from the YES bid.
+        if no_ask is None and isinstance(yes_bid, int):
+            no_ask = 100 - yes_bid
+        def valid(p):
+            return isinstance(p, int) and not isinstance(p, bool) and 1 <= p <= 99
+        if not valid(yes_ask):
+            yes_ask = None
+        if not valid(no_ask):
+            no_ask = None
+        if yes_ask is None and no_ask is None:
+            return None
+        mid = (
+            (yes_bid + yes_ask) / 200.0
+            if valid(yes_bid) and yes_ask is not None and yes_bid <= yes_ask
+            else None
+        )
+        return {"mid": mid, "yes_ask_cents": yes_ask, "no_ask_cents": no_ask}
     except Exception:
-        logger.warning("failed to fetch market price for ticker=%s", ticker)
-    return None
-
+        logger.warning("failed to fetch executable quotes for ticker=%s", ticker)
+        return None
 
 async def _call_risk_manager(
     http: httpx.AsyncClient,
@@ -199,6 +234,7 @@ async def _call_risk_manager(
     ticker: str,
     category: str,
     prediction_direction: str | None = None,
+    quoted_ask_cents: int | None = None,
 ) -> dict:
     resp = await http.post(
         f"{settings.risk_manager_url}/evaluate",
@@ -211,6 +247,7 @@ async def _call_risk_manager(
             "market_ticker": ticker,
             "market_category": category,
             "prediction_direction": prediction_direction,
+            "quoted_ask_cents": quoted_ask_cents,
         },
         timeout=30.0,
     )
@@ -371,39 +408,27 @@ async def run_iteration(
             confidence,
         )
 
-        # Fetch market price to compute EV/edge.
-        # EV and trade_probability are computed from the perspective of the
-        # side being traded (YES when probability >= 0.5, NO otherwise).
-        # Without this, NO trades use inverted EV: valid NO edges appear
-        # negative (denied) and invalid ones appear positive (approved).
-        market_price = await _fetch_market_price(http, settings, entry.ticker)
+        # Use the actual side's ASK price, not the midpoint, for entry EV.
+        # Edge is the gross probability gap; EV deducts estimated taker fees.
+        # Unknown quotes fail closed with no positive edge/EV.
+        quote = await _fetch_market_price(http, settings, entry.ticker)
+        market_price = quote.get("mid") if quote else None  # historical reporting
         side = "yes" if probability >= 0.5 else "no"
-        if not directional:
-            # The model has no real opinion — claiming edge against the
-            # market from a sub-threshold guess manufactures phantom EV.
-            ev = 0.0
-            trade_probability = 0.5
-            logger.info(
-                "non_directional_prediction market_id=%s confidence=%.2f — ev=0",
-                entry.market_id,
-                confidence,
+        quoted_ask_cents = quote.get(f"{side}_ask_cents") if quote else None
+        trade_probability = probability if side == "yes" else round(1.0 - probability, 4)
+        gross_edge = 0.0
+        ev = 0.0
+        estimated_fee_cents = None
+        if directional and quoted_ask_cents is not None:
+            estimated_fee_cents = estimate_taker_fee_cents(
+                quoted_ask_cents, settings.taker_fee_rate
             )
-        elif market_price is not None:
-            if side == "yes":
-                ev = round(probability - market_price, 4)
-                trade_probability = probability
-            else:
-                # For NO trades: edge = P(No)_model - P(No)_market
-                #               = (1 - probability) - (1 - market_price)
-                #               = market_price - probability
-                ev = round(market_price - probability, 4)
-                trade_probability = round(1.0 - probability, 4)
+            gross_edge = round(trade_probability - quoted_ask_cents / 100.0, 4)
+            ev = round(gross_edge - estimated_fee_cents / 100.0, 4)
         else:
-            ev = 0.0
-            trade_probability = probability if side == "yes" else round(1.0 - probability, 4)
-            logger.warning(
-                "market_price_unavailable ticker=%s — using ev=0 edge=0",
-                entry.ticker,
+            logger.info(
+                "non_executable_signal ticker=%s directional=%s side=%s ask=%s",
+                entry.ticker, directional, side, quoted_ask_cents,
             )
 
         # Step 3 — evaluate risk
@@ -414,9 +439,10 @@ async def run_iteration(
             )
             risk_data = await _call_risk_manager(
                 http, settings,
-                prediction_id, trade_probability, confidence, ev, ev,
+                prediction_id, trade_probability, confidence, ev, gross_edge,
                 entry.ticker, category,
                 prediction_direction=prediction_direction,
+                quoted_ask_cents=quoted_ask_cents,
             )
         except Exception as exc:
             logger.warning(
@@ -437,6 +463,22 @@ async def run_iteration(
 
         approved = bool(risk_data.get("approved", False))
         risk_reason = risk_data.get("reason", "")
+        # Defense in depth: never place an order when the buy quote is unknown.
+        if approved:
+            # Risk Manager's response must never increase exposure above the
+            # ask used for EV or invent fallback price / quantity values.
+            try:
+                limit_cents = int(recommended_price)
+                quantity = int(recommended_contracts)
+            except (ValueError, TypeError):
+                limit_cents, quantity = 0, 0
+            if (
+                quoted_ask_cents is None
+                or not 1 <= limit_cents <= quoted_ask_cents
+                or quantity < 1
+            ):
+                approved = False
+                risk_reason = "Unsafe or missing executable limit/quantity"
         recommended_contracts = risk_data.get("recommended_contracts")
         recommended_price = risk_data.get("recommended_max_price")
 
@@ -457,8 +499,8 @@ async def run_iteration(
                 logger.info("trade_skipped_dry_run market_id=%s", entry.market_id)
             else:
                 logger.info("trade_approved market_id=%s", entry.market_id)
-                qty = int(recommended_contracts) if recommended_contracts else 1
-                price = int(recommended_price) if recommended_price else max(1, int(trade_probability * 100))
+                qty = quantity
+                price = limit_cents
                 order_data = await _execute_trade(
                     http, settings, entry.ticker, side, qty, price
                 )
@@ -489,7 +531,7 @@ async def run_iteration(
                     probability=probability,
                     market_price=market_price,
                     expected_value=ev,
-                    edge=ev,
+                    edge=gross_edge,
                     side=side,
                     approved=approved,
                     risk_reason=risk_reason,
@@ -501,6 +543,10 @@ async def run_iteration(
                         "prediction_data": prediction_data,
                         "risk_data": risk_data,
                         "order_data": order_data,
+                        "quoted_ask_cents": quoted_ask_cents,
+                        "estimated_taker_fee_cents": estimated_fee_cents,
+                        "estimated_net_ev": ev,
+                        "fee_rate_assumption": settings.taker_fee_rate,
                     },
                 )
             except Exception:

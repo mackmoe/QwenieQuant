@@ -41,6 +41,7 @@ def _request(**overrides) -> EvaluationRequest:
         edge=0.10,
         market_ticker="TEST-TICKER",
         market_category="finance",
+        quoted_ask_cents=50,
     )
     defaults.update(overrides)
     return EvaluationRequest(**defaults)
@@ -479,3 +480,56 @@ def test_run_evaluation_backward_compatible_without_direction():
         _request(), _account(), [], 0, [], _settings()
     )
     assert result.risk_checks.direction_bias is True
+
+
+# ── Quoted execution prices and net-profit guard ──────────────────────────
+
+
+def test_missing_ask_fails_closed_even_when_model_claims_edge():
+    result = run_evaluation(
+        _request(quoted_ask_cents=None), _account(), [], 0, [], _settings()
+    )
+    assert result.approved is False
+    assert result.risk_checks.executable_quote is False
+    assert result.recommended_contracts is None
+
+
+def test_ask_above_safe_limit_rejected():
+    result = run_evaluation(
+        _request(quoted_ask_cents=70), _account(), [], 0, [], _settings()
+    )
+    assert result.approved is False
+    assert result.risk_checks.executable_quote is False
+
+
+def test_net_ev_revalidated_after_fee():
+    # Model 65% probability at 64c ask has a 1c gross edge but 2c taker fee.
+    result = run_evaluation(
+        _request(probability=0.65, edge=0.01, expected_value=0.01,
+                 quoted_ask_cents=64), _account(), [], 0, [],
+        _settings(min_edge=0.0),
+    )
+    assert result.approved is False
+    assert result.risk_checks.expected_value is False
+
+
+def test_approved_trade_uses_ask_not_model_limit():
+    result = run_evaluation(_request(), _account(), [], 0, [], _settings())
+    assert result.approved
+    assert result.recommended_max_price == 50
+    assert result.risk_checks.executable_quote
+
+
+def test_fee_included_in_small_account_bankroll():
+    # 50c price + 2c fee; with $10 and 5% cap, no affordable contract.
+    result = run_evaluation(
+        _request(), _account(balance=1000), [], 0, [], _settings()
+    )
+    assert result.approved is False
+    assert result.risk_checks.bankroll is False
+
+
+def test_dry_run_still_never_approves_with_good_quotes():
+    result = run_evaluation(_request(), _account(), [], 0, [], _settings(dry_run=True))
+    assert not result.approved
+    assert result.recommended_max_price == 50

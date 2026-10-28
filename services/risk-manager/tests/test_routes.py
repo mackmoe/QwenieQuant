@@ -35,6 +35,7 @@ def _good_prediction() -> dict:
         "edge": 0.10,
         "market_ticker": "TEST-TICKER",
         "market_category": "finance",
+        "quoted_ask_cents": 50,
     }
 
 
@@ -215,3 +216,19 @@ def test_evaluate_denied_when_at_position_limit(tc):
     body = r.json()
     assert body["approved"] is False
     assert body["risk_checks"]["open_positions"] is False
+
+
+def test_evaluate_missing_quote_fails_closed(tc):
+    client, _, _ = tc
+    pred = _good_prediction()
+    pred.pop("quoted_ask_cents")
+    r = client.post("/evaluate", json=pred)
+    assert r.status_code == 200
+    assert r.json()["approved"] is False
+    assert r.json()["risk_checks"]["executable_quote"] is False
+
+
+def test_evaluate_invalid_quote_rejected(tc):
+    client, _, _ = tc
+    pred = {**_good_prediction(), "quoted_ask_cents": 120}
+    assert client.post("/evaluate", json=pred).status_code == 422

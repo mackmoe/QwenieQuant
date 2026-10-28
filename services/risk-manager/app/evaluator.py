@@ -1,6 +1,6 @@
 from app.config import Settings
 from app.models import EvaluationRequest, EvaluationResponse, RiskChecks
-from app.position_sizing import calculate_contracts, calculate_max_price
+from app.position_sizing import calculate_contracts, calculate_max_price, estimate_taker_fee_cents
 
 
 # ── Individual rule checks (pure functions, independently testable) ─────────
@@ -28,13 +28,14 @@ def check_daily_loss(
     new_contracts: int,
     new_price: int,
     max_daily_loss: int,
+    fee_cents: int = 0,
 ) -> bool:
     """
     Verify that adding this trade keeps cumulative daily exposure within the
     configured limit.  today_exposure is the sum of already-approved trades
     for today (contracts × price, in cents).
     """
-    new_cost = new_contracts * new_price
+    new_cost = new_contracts * (new_price + max(0, fee_cents))
     return (today_exposure + new_cost) <= max_daily_loss
 
 
@@ -43,11 +44,12 @@ def check_bankroll(
     contracts: int,
     price: int,
     max_position_percent: float,
+    fee_cents: int = 0,
 ) -> bool:
     """Verify the proposed trade cost doesn't exceed the per-trade bankroll cap."""
     if contracts <= 0 or price <= 0:
         return False
-    cost = contracts * price
+    cost = contracts * (price + max(0, fee_cents))
     allowed = balance * max_position_percent / 100
     return cost <= allowed
 
@@ -125,6 +127,8 @@ def _denial_reason(
             f"Consecutive denied evaluations at limit "
             f"({settings.max_consecutive_losses})"
         )
+    if not checks.executable_quote:
+        parts.append("Executable ask quote unavailable or above safe limit")
     if not checks.direction_bias:
         parts.append(
             f"YES prediction confidence {request.confidence:.2f} below "
@@ -144,25 +148,36 @@ def run_evaluation(
     balance = account.get("balance", 0)
     open_count = len(positions)
 
-    max_price = calculate_max_price(request.probability, request.edge)
-    contracts = calculate_contracts(balance, max_price, settings.max_position_percent)
+    # Price must never exceed an actual executable quote. Missing quotes fail closed.
+    theoretical_limit = calculate_max_price(request.probability, request.edge)
+    quote = request.quoted_ask_cents
+    quote_ok = quote is not None and quote <= theoretical_limit
+    max_price = quote if quote_ok else 0
+    fee_cents = estimate_taker_fee_cents(max_price, settings.taker_fee_rate) if quote_ok else 0
+    contracts = calculate_contracts(
+        balance, max_price, settings.max_position_percent, fee_cents=fee_cents
+    )
+    # Independently verify claimed expected value against fillable ask and fees.
+    net_ev = request.probability - (max_price + fee_cents) / 100.0 if quote_ok else 0.0
+    effective_ev = min(request.expected_value, net_ev)
 
     checks = RiskChecks(
         confidence=check_confidence(request.confidence, settings.min_confidence),
         expected_value=check_expected_value(
-            request.expected_value, settings.min_expected_value
+            effective_ev, settings.min_expected_value
         ),
         edge=check_edge(request.edge, settings.min_edge),
         open_positions=check_open_positions(open_count, settings.max_open_positions),
         daily_loss=check_daily_loss(
-            today_exposure, contracts, max_price, settings.max_daily_loss
+            today_exposure, contracts, max_price, settings.max_daily_loss, fee_cents
         ),
         bankroll=check_bankroll(
-            balance, contracts, max_price, settings.max_position_percent
+            balance, contracts, max_price, settings.max_position_percent, fee_cents
         ),
         consecutive_losses=check_consecutive_losses(
             recent_decisions, settings.max_consecutive_losses
         ),
+        executable_quote=quote_ok,
         direction_bias=check_direction_bias(
             request.prediction_direction,
             request.confidence,
@@ -179,6 +194,7 @@ def run_evaluation(
         checks.bankroll,
         checks.consecutive_losses,
         checks.direction_bias,
+        checks.executable_quote,
     ])
 
     if settings.dry_run:
