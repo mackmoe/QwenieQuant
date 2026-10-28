@@ -5,6 +5,7 @@ import time
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app import diagnostics as diagnostics_module
 from app import postgres as postgres_module
 from app import queue as queue_module
 from app import workflow as workflow_module
@@ -114,6 +115,31 @@ async def activity_stats(
         carried_over=carried_over,
         oldest_queued_minutes=oldest,
     )
+
+
+@router.get("/stats/diagnostics", response_model=None)
+async def workflow_diagnostics() -> dict:
+    """Read-only, sanitized workflow state for the private diagnostics bridge.
+
+    This endpoint intentionally never returns market IDs, full risk reasons,
+    trade IDs, account values, or raw metadata. Missing database state is
+    marked unavailable, not misrepresented as an empty successful history.
+    """
+    active = queue_module.get_stats()
+    result = {
+        "state": "unavailable" if _pool is None else "ready",
+        "queued_now": active.get("QUEUED", 0),
+        "in_progress_now": active.get("IN_PROGRESS", 0),
+        "latest_recorded": None,
+    }
+    if _pool is None:
+        return result
+    try:
+        result["latest_recorded"] = await diagnostics_module.fetch_latest_record(_pool)
+    except Exception:
+        logger.warning("read-only workflow diagnostics unavailable")
+        result["state"] = "unavailable"
+    return result
 
 
 @router.get("/queue/next", response_model=QueueEntry | None)
