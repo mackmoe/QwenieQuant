@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     min_confidence: float = 0.60
     min_expected_value: float = 0.01
     min_edge: float = 0.05
+    # Standard taker fee estimate. Increase for markets with special fees.
+    taker_fee_rate: float = 0.07
     # YES predictions require higher confidence: resolved data shows the
     # model's mid-confidence YES calls run well below 50% accuracy while
     # NO calls at the same confidence hold up (residual YES bias).
