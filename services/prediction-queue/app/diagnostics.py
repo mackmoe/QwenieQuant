@@ -47,15 +47,15 @@ def sanitize_record(row) -> dict | None:
     trade_status = row.get("trade_status")
     return {
         "completed_at_utc": stamp,
-        "trade_status": trade_status if trade_status in TRADE_STATUSES else "unknown",
-        "side": row.get("side") if row.get("side") in ("yes", "no") else None,
+        "trade_status": trade_status if isinstance(trade_status, str) and trade_status in TRADE_STATUSES else "unknown",
+        "side": row.get("side") if isinstance(row.get("side"), str) and row.get("side") in ("yes", "no") else None,
         "confidence": _num(row.get("confidence"), 0, 1),
         "gross_edge": _num(row.get("edge"), -1, 1),
         "estimated_net_ev": _num(row.get("expected_value"), -1, 1),
         "quoted_ask_cents": _int(row.get("quoted_ask_cents"), 1, 99),
         "estimated_taker_fee_cents": _int(row.get("estimated_taker_fee_cents"), 0, 100),
         "risk_approved": row.get("approved") if type(row.get("approved")) is bool else None,
-        "passed_all_risk_checks": all_checks if checks else None,
+        "passed_all_risk_checks": all_checks if checks and all(type(checks.get(name)) is bool for name in CHECKS) else None,
         "failed_risk_checks": failed_checks if checks else None,
         "dry_run": row.get("dry_run") if type(row.get("dry_run")) is bool else None,
     }
