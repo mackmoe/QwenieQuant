@@ -463,6 +463,8 @@ async def run_iteration(
 
         approved = bool(risk_data.get("approved", False))
         risk_reason = risk_data.get("reason", "")
+        recommended_contracts = risk_data.get("recommended_contracts")
+        recommended_price = risk_data.get("recommended_max_price")
         # Defense in depth: never place an order when the buy quote is unknown.
         if approved:
             # Risk Manager's response must never increase exposure above the
@@ -479,9 +481,6 @@ async def run_iteration(
             ):
                 approved = False
                 risk_reason = "Unsafe or missing executable limit/quantity"
-        recommended_contracts = risk_data.get("recommended_contracts")
-        recommended_price = risk_data.get("recommended_max_price")
-
         logger.info(
             "risk_evaluation_completed market_id=%s approved=%s reason=%s",
             entry.market_id,
