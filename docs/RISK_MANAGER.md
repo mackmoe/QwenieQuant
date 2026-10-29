@@ -42,16 +42,25 @@ variables.
 | Open Positions | `MAX_OPEN_POSITIONS` | `10` | `open_count < max_open_positions` |
 | Daily Loss | `MAX_DAILY_LOSS` | `10000` | `today_exposure + new_trade_cost <= max_daily_loss` |
 | Bankroll | `MAX_POSITION_PERCENT` | `5.0` | `contracts * price <= balance * percent / 100` |
-| Consecutive Losses | `MAX_CONSECUTIVE_LOSSES` | `5` | Consecutive denied evaluations < limit |
+| Consecutive Losses | `MAX_CONSECUTIVE_LOSSES` | `5` | Consecutive settled losing trades < limit (requires settlement/P&L data) |
 
 `MAX_DAILY_LOSS` is in cents (10000 = $100.00). The daily exposure is the
 sum of `recommended_contracts * recommended_max_price` for all approved
 decisions made today — a spending cap, not realized P&L (the service does
 not execute trades and cannot observe actual outcomes).
 
-Consecutive losses are consecutive `approved=false` entries in recent
-decisions (newest first). This acts as a safety valve when predictions are
-consistently failing evaluation.
+Rejected evaluations are **not** trading losses. The consecutive-loss check
+counts only explicitly settled trades with integer `realized_pnl_cents`
+values, ignoring rejected, dry-run and unsettled evaluations. A settled
+winning or breakeven trade resets the streak.
+
+**Important limitation:** The existing `risk.trade_decisions` table stores
+approval decisions without settled outcomes or realized P&L. Until an
+authoritative settlement-to-risk feed is integrated, historical decisions
+cannot trigger this loss-streak guard. Do not treat this check as a live
+trading loss circuit breaker. Keep `DRY_RUN=true` while validating and
+implement a real settlement-based limit before enabling live trading.
+Other risk checks continue to operate normally.
 
 ## Position Sizing
 
@@ -216,7 +225,7 @@ is 8 hex characters of a UUID4.
 | `MAX_POSITION_PERCENT` | No | `5.0` | Max % of balance per trade |
 | `MAX_OPEN_POSITIONS` | No | `10` | Max simultaneous open positions |
 | `MAX_DAILY_LOSS` | No | `10000` | Max daily trade exposure in cents |
-| `MAX_CONSECUTIVE_LOSSES` | No | `5` | Max consecutive denied evaluations |
+| `MAX_CONSECUTIVE_LOSSES` | No | `5` | Max consecutive settled losses (requires P&L integration) |
 | `KALSHI_CONNECTOR_URL` | No | `http://kalshi-connector:8003` | URL of Kalshi Connector |
 | `POSTGRES_URL` | No | `""` | PostgreSQL connection URL |
 | `HTTP_TIMEOUT` | No | `30.0` | HTTP client timeout in seconds |
@@ -282,11 +291,12 @@ execute trades and cannot observe outcomes. `MAX_DAILY_LOSS` limits the sum
 of `recommended_contracts * recommended_max_price` for approved decisions
 today. This is a forward-looking spending cap — not a P&L guardrail.
 
-**2. Consecutive losses tracks denied evaluations.** Because the service
-does not observe trade outcomes, "consecutive losses" is implemented as
-consecutive `approved=false` decisions (newest first). This signals that
-predictions are consistently failing evaluation, which may indicate a
-model or configuration problem requiring attention.
+**2. Consecutive losses needs settled outcomes.** Previously `approved=false`
+decisions were counted as losses, including dry-run rejections, potentially
+creating a self-sustaining denial streak. Only verified settled P&L may now
+advance the streak. Since settlement outcomes are not yet available in this
+service's stored decisions, the guard is currently inactive with existing
+history; enabling live trading requires an actual loss-limit implementation.
 
 **3. Bankroll check delegates to position sizing.** When Kalshi Connector
 is unreachable, `get_account()` returns `balance=0`. Zero balance causes
