@@ -77,18 +77,31 @@ def check_consecutive_losses(
     recent_decisions: list[dict],
     max_consecutive_losses: int,
 ) -> bool:
-    """
-    Count consecutive denied evaluations (newest first) and check against the
-    configured limit.  A streak of denials signals the prediction system may
-    be producing consistently low-quality predictions.
+    """Count consecutive *settled trading* losses, newest first.
+
+    A rejected or dry-run evaluation is not an executed trade. Ignore those
+    records entirely. Only settlement rows with a genuine integer realized
+    P&L in cents can advance or reset the loss streak.
+
+    The existing risk.trade_decisions table contains approvals/denials, not
+    settlement P&L, so its rows cannot establish a loss. A verified settlement
+    feed must be integrated before relying on this guard for live trading.
     """
     consecutive = 0
-    for d in recent_decisions:
-        if not d.get("approved", True):
+    for decision in recent_decisions:
+        if decision.get("settled") is not True:
+            continue
+        pnl = decision.get("realized_pnl_cents")
+        if type(pnl) is not int:
+            continue
+        if pnl < 0:
             consecutive += 1
+            if consecutive >= max_consecutive_losses:
+                return False
         else:
+            # A settled winning or breakeven trade ends the loss streak.
             break
-    return consecutive < max_consecutive_losses
+    return True
 
 
 # ── Combined evaluation ────────────────────────────────────────────────────
@@ -124,7 +137,7 @@ def _denial_reason(
         parts.append("Insufficient bankroll for position sizing")
     if not checks.consecutive_losses:
         parts.append(
-            f"Consecutive denied evaluations at limit "
+            f"Consecutive settled trading losses at limit "
             f"({settings.max_consecutive_losses})"
         )
     if not checks.executable_quote:
