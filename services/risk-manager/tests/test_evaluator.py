@@ -191,29 +191,58 @@ def test_consecutive_losses_passes_no_history():
     assert check_consecutive_losses([], 5) is True
 
 
-def test_consecutive_losses_passes_with_recent_approval():
-    decisions = [{"approved": False}, {"approved": False}, {"approved": True}]
+def test_consecutive_losses_ignores_rejected_evaluations():
+    # Existing decision history is not a record of settled trade losses.
+    decisions = [{"approved": False}] * 50
+    assert check_consecutive_losses(decisions, 5) is True
+
+
+def test_consecutive_losses_ignores_dry_run_and_unsettled_trades():
+    decisions = [
+        {"approved": False, "dry_run": True},
+        {"settled": False, "realized_pnl_cents": -100},
+        {"settled": True, "realized_pnl_cents": None},
+    ] + [{"settled": True, "realized_pnl_cents": -50}] * 4
     assert check_consecutive_losses(decisions, 5) is True
 
 
 def test_consecutive_losses_passes_below_limit():
-    decisions = [{"approved": False}] * 4 + [{"approved": True}]
+    decisions = [{"settled": True, "realized_pnl_cents": -20}] * 4
     assert check_consecutive_losses(decisions, 5) is True
 
 
 def test_consecutive_losses_fails_at_limit():
-    decisions = [{"approved": False}] * 5
+    decisions = [{"settled": True, "realized_pnl_cents": -20}] * 5
     assert check_consecutive_losses(decisions, 5) is False
 
 
 def test_consecutive_losses_fails_above_limit():
-    decisions = [{"approved": False}] * 8
+    decisions = [{"settled": True, "realized_pnl_cents": -20}] * 8
     assert check_consecutive_losses(decisions, 5) is False
 
 
-def test_consecutive_losses_all_approved():
-    decisions = [{"approved": True}] * 10
+def test_consecutive_losses_stops_at_settled_win():
+    decisions = (
+        [{"settled": True, "realized_pnl_cents": -20}] * 3
+        + [{"settled": True, "realized_pnl_cents": 15}]
+        + [{"settled": True, "realized_pnl_cents": -20}] * 6
+    )
     assert check_consecutive_losses(decisions, 5) is True
+
+
+def test_consecutive_losses_stops_at_breakeven():
+    decisions = (
+        [{"settled": True, "realized_pnl_cents": -20}] * 2
+        + [{"settled": True, "realized_pnl_cents": 0}]
+        + [{"settled": True, "realized_pnl_cents": -20}] * 5
+    )
+    assert check_consecutive_losses(decisions, 5) is True
+
+
+def test_consecutive_losses_rejects_noninteger_pnl():
+    assert check_consecutive_losses(
+        [{"settled": True, "realized_pnl_cents": True}] * 5, 5
+    ) is True
 
 
 # ── run_evaluation ──────────────────────────────────────────────────────────
@@ -332,7 +361,7 @@ def test_evaluate_denied_zero_balance_fails_bankroll():
 
 
 def test_evaluate_denied_consecutive_losses():
-    decisions = [{"approved": False}] * 5
+    decisions = [{"settled": True, "realized_pnl_cents": -10}] * 5
     response = run_evaluation(
         _request(),
         _account(100_000),
@@ -343,6 +372,17 @@ def test_evaluate_denied_consecutive_losses():
     )
     assert response.approved is False
     assert response.risk_checks.consecutive_losses is False
+
+
+def test_evaluate_rejections_do_not_cause_permanent_lockout():
+    decisions = [{"approved": False}] * 25
+    response = run_evaluation(
+        _request(), _account(100_000), [], 0, decisions,
+        _settings(dry_run=True, max_consecutive_losses=5),
+    )
+    assert response.risk_checks.consecutive_losses is True
+    assert response.recommended_contracts is not None
+    assert response.approved is False  # Dry run still prevents real orders
 
 
 def test_evaluate_dry_run_never_approves():
