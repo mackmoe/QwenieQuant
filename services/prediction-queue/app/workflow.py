@@ -200,17 +200,25 @@ async def _fetch_market_price(
             return None
         data = resp.json()
         yes_bid = data.get("yes_bid")
+        no_bid = data.get("no_bid")
         yes_ask = data.get("yes_ask")
         no_ask = data.get("no_ask")
-        # The NO ask can also be inferred from the YES bid.
-        if no_ask is None and isinstance(yes_bid, int):
-            no_ask = 100 - yes_bid
+
         def valid(p):
             return isinstance(p, int) and not isinstance(p, bool) and 1 <= p <= 99
-        if not valid(yes_ask):
-            yes_ask = None
-        if not valid(no_ask):
-            no_ask = None
+
+        # Kalshi's YES and NO contracts are complementary: a resting NO
+        # bid at X is an executable YES ask at (100 - X), and vice versa.
+        # Normalize the bid/ask fields before deriving missing quotes; never
+        # turn absent, zero, 100-cent, or malformed bids into fake offers.
+        yes_bid = yes_bid if valid(yes_bid) else None
+        no_bid = no_bid if valid(no_bid) else None
+        yes_ask = yes_ask if valid(yes_ask) else None
+        no_ask = no_ask if valid(no_ask) else None
+        if yes_ask is None and no_bid is not None:
+            yes_ask = 100 - no_bid
+        if no_ask is None and yes_bid is not None:
+            no_ask = 100 - yes_bid
         if yes_ask is None and no_ask is None:
             return None
         mid = (
